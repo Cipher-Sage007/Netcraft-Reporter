@@ -55,7 +55,6 @@ docker-compose up -d
 | Document | Description |
 |----------|-------------|
 | [QUICKSTART.md](QUICKSTART.md) | 5-minute setup guide |
-| [SYSTEM_DESIGN.md](SYSTEM_DESIGN.md) | Complete architecture documentation |
 | [config.example.json](config.example.json) | Example configuration |
 
 ---
@@ -181,8 +180,6 @@ Browser (React) ←→ Express.js + Socket.IO ←→ Netcraft API
                           ↓
                     Supabase (PostgreSQL)
 ```
-
-**See [SYSTEM_DESIGN.md](SYSTEM_DESIGN.md) for detailed architecture**
 
 ---
 
