@@ -26,3 +26,7 @@ Thumbs.db
 
 # Submissions data
 submissions.json
+
+# Extra technical contents
+PROJECT_STRUCTURE.md
+SYSTEM_DESIGN.md
