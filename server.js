@@ -110,38 +110,6 @@ class NetcraftAPI {
     }
   }
 
-  async getUrlUuids(submissionUuid, urls) {
-    const headers = {
-      'Content-Type': 'application/json'
-    };
-
-    if (this.apiKey) {
-      headers['Authorization'] = `Bearer ${this.apiKey}`;
-    }
-
-    try {
-      const urlObjects = urls.map(url => ({ url }));
-
-      const response = await fetch(`${this.baseUrl}/submission/${submissionUuid}/url_uuids`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          urls: urlObjects
-        })
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        return { success: false, error: `HTTP ${response.status}: ${errorText}` };
-      }
-
-      const data = await response.json();
-      return { success: true, data };
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  }
-
   async getSubmissionStatus(uuid) {
     const headers = {};
 
@@ -161,6 +129,32 @@ class NetcraftAPI {
       }
 
       const data = await response.json();
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  async getSubmissionUrls(batchUuid) {
+    const headers = {};
+
+    if (this.apiKey) {
+      headers['Authorization'] = `Bearer ${this.apiKey}`;
+    }
+
+    try {
+      const response = await fetch(`${this.baseUrl}/submission/${batchUuid}/urls`, {
+        method: 'GET',
+        headers
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        return { success: false, error: `HTTP ${response.status}: ${errorText}` };
+      }
+
+      const data = await response.json();
+      // Returns { urls: [{ url, url_state, tags, classification_log, uuid, ... }] }
       return { success: true, data };
     } catch (error) {
       return { success: false, error: error.message };
