@@ -244,17 +244,6 @@ Docker Container (Application)
     ↓
 Supabase (Database)
 ```
-
-### Production Checklist
-
-- [ ] Use HTTPS (SSL/TLS)
-- [ ] Set up NGINX reverse proxy
-- [ ] Configure firewall
-- [ ] Enable authentication
-- [ ] Set up monitoring
-- [ ] Configure backups
-- [ ] Use environment variables
-
 ---
 
 ## 🤝 Contributing
