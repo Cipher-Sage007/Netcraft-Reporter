@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  netcraft-reporter:
+    build: .
+    container_name: netcraft-reporter
+    ports:
+      - "3000:3000"
+    volumes:
+      # Mount config file to persist configuration
+      - ./config.json:/app/config.json
+      # Mount uploads directory
+      - ./uploads:/app/uploads
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    networks:
+      - netcraft-network
+
+networks:
+  netcraft-network:
+    driver: bridge

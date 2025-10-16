@@ -1,0 +1,13 @@
+{
+  "email": "your-email@example.com",
+  "apiKey": "",
+  "apiBaseUrl": "https://report.netcraft.com/api/v3",
+  "supabase": {
+    "url": "https://your-project.supabase.co",
+    "key": "your-supabase-anon-key",
+    "tableName": "netcraft_submissions"
+  },
+  "waitBeforeUuidFetch": 10000,
+  "uuidFetchRetries": 3,
+  "uuidFetchRetryDelay": 5000
+}

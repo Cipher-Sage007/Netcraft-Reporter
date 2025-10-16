@@ -1,0 +1,1305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Netcraft Reporter - Web Dashboard</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    .header {
+      background: white;
+      border-radius: 16px;
+      padding: 30px 40px;
+      margin-bottom: 24px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+    }
+
+    .header h1 {
+      font-size: 32px;
+      color: #1a202c;
+      margin-bottom: 8px;
+      font-weight: 700;
+    }
+
+    .header p {
+      color: #718096;
+      font-size: 16px;
+    }
+
+    .card {
+      background: white;
+      border-radius: 16px;
+      padding: 32px;
+      margin-bottom: 24px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+    }
+
+    .card h2 {
+      font-size: 24px;
+      color: #1a202c;
+      margin-bottom: 20px;
+      font-weight: 600;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 24px;
+      border-bottom: 2px solid #e2e8f0;
+      padding-bottom: 2px;
+    }
+
+    .tab {
+      padding: 12px 24px;
+      background: none;
+      border: none;
+      font-size: 15px;
+      font-weight: 500;
+      color: #718096;
+      cursor: pointer;
+      transition: all 0.2s;
+      position: relative;
+      border-radius: 8px 8px 0 0;
+    }
+
+    .tab:hover {
+      color: #667eea;
+      background: #f7fafc;
+    }
+
+    .tab.active {
+      color: #667eea;
+      background: #f7fafc;
+    }
+
+    .tab.active::after {
+      content: '';
+      position: absolute;
+      bottom: -2px;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: #667eea;
+    }
+
+    .form-group {
+      margin-bottom: 20px;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 14px;
+      font-weight: 500;
+      color: #2d3748;
+      margin-bottom: 8px;
+    }
+
+    .form-group input,
+    .form-group textarea {
+      width: 100%;
+      padding: 12px 16px;
+      border: 2px solid #e2e8f0;
+      border-radius: 8px;
+      font-size: 15px;
+      font-family: inherit;
+      transition: all 0.2s;
+    }
+
+    .form-group input:focus,
+    .form-group textarea:focus {
+      outline: none;
+      border-color: #667eea;
+      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+
+    .form-group textarea {
+      min-height: 150px;
+      resize: vertical;
+    }
+
+    .button {
+      padding: 12px 24px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    }
+
+    .button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 16px rgba(102, 126, 234, 0.5);
+    }
+
+    .button:active {
+      transform: translateY(0);
+    }
+
+    .button:disabled {
+      background: #cbd5e0;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .button-secondary {
+      background: white;
+      color: #667eea;
+      border: 2px solid #667eea;
+      box-shadow: none;
+    }
+
+    .button-secondary:hover {
+      background: #f7fafc;
+    }
+
+    .button-group {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .file-upload {
+      border: 2px dashed #cbd5e0;
+      border-radius: 8px;
+      padding: 40px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      background: #f7fafc;
+    }
+
+    .file-upload:hover {
+      border-color: #667eea;
+      background: #edf2f7;
+    }
+
+    .file-upload.drag-over {
+      border-color: #667eea;
+      background: #e6fffa;
+    }
+
+    .file-upload input {
+      display: none;
+    }
+
+    .progress-container {
+      margin-top: 24px;
+    }
+
+    .progress-bar {
+      width: 100%;
+      height: 8px;
+      background: #e2e8f0;
+      border-radius: 4px;
+      overflow: hidden;
+      margin-bottom: 12px;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+      transition: width 0.3s;
+    }
+
+    .progress-fill.rate-limit {
+      background: linear-gradient(90deg, #f59e0b 0%, #ef4444 100%);
+    }
+
+    .progress-text {
+      font-size: 14px;
+      color: #4a5568;
+    }
+
+    .progress-text.rate-limit {
+      color: #dc2626;
+      font-weight: 600;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .stat-card {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      padding: 20px;
+      border-radius: 12px;
+      color: white;
+    }
+
+    .stat-card h3 {
+      font-size: 14px;
+      font-weight: 500;
+      opacity: 0.9;
+      margin-bottom: 8px;
+    }
+
+    .stat-card .value {
+      font-size: 32px;
+      font-weight: 700;
+    }
+
+    .table-container {
+      overflow-x: auto;
+      border-radius: 8px;
+      border: 1px solid #e2e8f0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    thead {
+      background: #f7fafc;
+    }
+
+    th {
+      padding: 16px;
+      text-align: left;
+      font-size: 13px;
+      font-weight: 600;
+      color: #4a5568;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    th:hover {
+      background: #edf2f7;
+    }
+
+    td {
+      padding: 16px;
+      border-top: 1px solid #e2e8f0;
+      font-size: 14px;
+      color: #2d3748;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .badge.pending {
+      background: #fef5e7;
+      color: #d68910;
+    }
+
+    .badge.processing {
+      background: #e3f2fd;
+      color: #1976d2;
+    }
+
+    .badge.completed {
+      background: #e8f5e9;
+      color: #2e7d32;
+    }
+
+    .badge.failed {
+      background: #ffebee;
+      color: #c62828;
+    }
+
+    .search-box {
+      margin-bottom: 16px;
+    }
+
+    .search-box input {
+      width: 100%;
+      padding: 12px 16px;
+      border: 2px solid #e2e8f0;
+      border-radius: 8px;
+      font-size: 15px;
+    }
+
+    .filter-buttons {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+
+    .filter-btn {
+      padding: 8px 16px;
+      background: white;
+      border: 2px solid #e2e8f0;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .filter-btn:hover {
+      border-color: #667eea;
+      color: #667eea;
+    }
+
+    .filter-btn.active {
+      background: #667eea;
+      color: white;
+      border-color: #667eea;
+    }
+
+    .alert {
+      padding: 16px 20px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      font-size: 14px;
+    }
+
+    .alert.success {
+      background: #e8f5e9;
+      color: #2e7d32;
+      border-left: 4px solid #2e7d32;
+    }
+
+    .alert.error {
+      background: #ffebee;
+      color: #c62828;
+      border-left: 4px solid #c62828;
+    }
+
+    .alert.info {
+      background: #e3f2fd;
+      color: #1976d2;
+      border-left: 4px solid #1976d2;
+    }
+
+    .setup-instructions {
+      background: #f7fafc;
+      border-left: 4px solid #667eea;
+      padding: 20px;
+      border-radius: 8px;
+      margin-top: 20px;
+    }
+
+    .setup-instructions h3 {
+      color: #667eea;
+      margin-bottom: 12px;
+      font-size: 18px;
+    }
+
+    .setup-instructions ol {
+      margin-left: 20px;
+      line-height: 1.8;
+      color: #4a5568;
+    }
+
+    .setup-instructions code {
+      background: white;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      color: #e53e3e;
+    }
+
+    .sql-box {
+      background: #1a202c;
+      color: #68d391;
+      padding: 20px;
+      border-radius: 8px;
+      margin: 16px 0;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      overflow-x: auto;
+      white-space: pre;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #718096;
+    }
+
+    .spinner {
+      border: 3px solid #e2e8f0;
+      border-top: 3px solid #667eea;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 16px;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    .url-preview {
+      max-width: 400px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .copy-btn {
+      background: none;
+      border: none;
+      color: #667eea;
+      cursor: pointer;
+      font-size: 12px;
+      padding: 4px 8px;
+      border-radius: 4px;
+      transition: all 0.2s;
+    }
+
+    .copy-btn:hover {
+      background: #f7fafc;
+    }
+
+    @media (max-width: 768px) {
+      .header h1 {
+        font-size: 24px;
+      }
+
+      .card {
+        padding: 20px;
+      }
+
+      .stats-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      table {
+        font-size: 13px;
+      }
+
+      td, th {
+        padding: 12px 8px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo } = React;
+
+    // Main App Component
+    function App() {
+      const [activeTab, setActiveTab] = useState('submit');
+      const [config, setConfig] = useState(null);
+      const [loading, setLoading] = useState(true);
+
+      useEffect(() => {
+        loadConfig();
+      }, []);
+
+      const loadConfig = async () => {
+        try {
+          const res = await fetch('/api/config');
+          const data = await res.json();
+          setConfig(data);
+        } catch (error) {
+          console.error('Error loading config:', error);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      if (loading) {
+        return (
+          <div className="container">
+            <div className="card">
+              <div className="loading">
+                <div className="spinner"></div>
+                <p>Loading...</p>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      const needsConfig = !config?.hasSupabaseConfig || !config?.email;
+
+      return (
+        <div className="container">
+          <div className="header">
+            <h1>🛡️ Netcraft Reporter</h1>
+            <p>Report malicious URLs and track their analysis status</p>
+          </div>
+
+          {needsConfig && (
+            <div className="alert error">
+              ⚠️ Configuration required! Please go to the <strong>Configuration</strong> tab to set up your email and Supabase database.
+            </div>
+          )}
+
+          <div className="card">
+            <div className="tabs">
+              <button
+                className={`tab ${activeTab === 'submit' ? 'active' : ''}`}
+                onClick={() => setActiveTab('submit')}
+              >
+                📤 Submit URLs
+              </button>
+              <button
+                className={`tab ${activeTab === 'submissions' ? 'active' : ''}`}
+                onClick={() => setActiveTab('submissions')}
+              >
+                📊 View Submissions
+              </button>
+              <button
+                className={`tab ${activeTab === 'config' ? 'active' : ''}`}
+                onClick={() => setActiveTab('config')}
+              >
+                ⚙️ Configuration
+              </button>
+            </div>
+
+            {activeTab === 'submit' && <SubmitTab config={config} />}
+            {activeTab === 'submissions' && <SubmissionsTab config={config} />}
+            {activeTab === 'config' && <ConfigTab config={config} onUpdate={loadConfig} />}
+          </div>
+        </div>
+      );
+    }
+
+    // Submit Tab Component
+    function SubmitTab({ config }) {
+      const [urls, setUrls] = useState('');
+      const [submitting, setSubmitting] = useState(false);
+      const [progress, setProgress] = useState(null);
+      const [result, setResult] = useState(null);
+      const [socket, setSocket] = useState(null);
+      const [dragOver, setDragOver] = useState(false);
+
+      useEffect(() => {
+        const newSocket = io();
+        setSocket(newSocket);
+
+        return () => newSocket.close();
+      }, []);
+
+      const processFile = async (file) => {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+          const res = await fetch('/api/upload', {
+            method: 'POST',
+            body: formData
+          });
+
+          const data = await res.json();
+          if (data.success) {
+            setUrls(data.urls.join('\n'));
+          }
+        } catch (error) {
+          alert('Error uploading file: ' + error.message);
+        }
+      };
+
+      const handleFileUpload = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        await processFile(file);
+      };
+
+      const handleDragEnter = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setDragOver(true);
+      };
+
+      const handleDragLeave = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setDragOver(false);
+      };
+
+      const handleDragOver = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      };
+
+      const handleDrop = async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setDragOver(false);
+
+        const files = e.dataTransfer.files;
+        if (files.length === 0) return;
+
+        const file = files[0];
+        if (!file.name.endsWith('.txt')) {
+          alert('Please upload a .txt file');
+          return;
+        }
+
+        await processFile(file);
+      };
+
+      const handleSubmit = async () => {
+        const urlList = urls.split('\n')
+          .map(u => u.trim())
+          .filter(u => u && (u.startsWith('http://') || u.startsWith('https://')));
+
+        if (urlList.length === 0) {
+          alert('Please enter at least one valid URL');
+          return;
+        }
+
+        setSubmitting(true);
+        setProgress({ stage: 'starting', message: 'Starting...', progress: 0 });
+        setResult(null);
+
+        try {
+          const res = await fetch('/api/report', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ urls: urlList })
+          });
+
+          const data = await res.json();
+
+          if (data.success) {
+            // Join socket room for progress updates
+            socket.emit('join-job', data.jobId);
+
+            socket.on('progress', (progressData) => {
+              setProgress(progressData);
+            });
+
+            socket.on('complete', (resultData) => {
+              setResult(resultData);
+              setSubmitting(false);
+              setProgress(null);
+            });
+
+            socket.on('rate-limit', (rateLimitData) => {
+              // Show rate limit warning
+              setProgress({
+                stage: 'rate-limit',
+                message: `⚠️ ${rateLimitData.message}`,
+                progress: 100
+              });
+            });
+
+            socket.on('error', (errorData) => {
+              alert('Error: ' + errorData.message);
+              setSubmitting(false);
+              setProgress(null);
+            });
+          } else {
+            alert('Error: ' + data.error);
+            setSubmitting(false);
+          }
+        } catch (error) {
+          alert('Error: ' + error.message);
+          setSubmitting(false);
+          setProgress(null);
+        }
+      };
+
+      const needsConfig = !config?.hasSupabaseConfig || !config?.email;
+
+      return (
+        <div>
+          <h2>Submit URLs to Netcraft</h2>
+
+          {result && (
+            <div className={`alert ${result.rateLimitReached ? 'error' : 'success'}`}>
+              {result.rateLimitReached ? (
+                <>
+                  ⚠️ <strong>Rate Limit Reached!</strong><br/>
+                  {result.message}<br/><br/>
+                  <strong>Summary:</strong><br/>
+                  • Total URLs: {result.total}<br/>
+                  • Successfully Reported: {result.reported}<br/>
+                  • Skipped (already reported): {result.skipped}<br/>
+                  • Failed (rate limited): {result.failed}<br/><br/>
+                  <em>Please try again after some time to submit the remaining URLs.</em>
+                </>
+              ) : (
+                <>
+                  ✅ Successfully processed {result.total} URLs<br/>
+                  • Reported: {result.reported}<br/>
+                  • Skipped: {result.skipped}<br/>
+                  • Failed: {result.failed}
+                </>
+              )}
+            </div>
+          )}
+
+          <div className="form-group">
+            <label>Paste URLs (one per line)</label>
+            <textarea
+              value={urls}
+              onChange={(e) => setUrls(e.target.value)}
+              placeholder="https://example.com&#10;https://phishing-site.com&#10;https://malicious-url.com"
+              disabled={submitting}
+            />
+          </div>
+
+          <div
+            className={`file-upload ${dragOver ? 'drag-over' : ''}`}
+            onClick={() => !submitting && document.getElementById('file-input').click()}
+            onDragEnter={handleDragEnter}
+            onDragLeave={handleDragLeave}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
+          >
+            <input
+              id="file-input"
+              type="file"
+              accept=".txt"
+              onChange={handleFileUpload}
+              disabled={submitting}
+            />
+            <p>📁 {dragOver ? 'Drop your file here!' : 'Click to upload or drag and drop a .txt file'}</p>
+            {!dragOver && (
+              <p style={{ fontSize: '13px', color: '#718096', marginTop: '8px' }}>
+                Supports .txt files with one URL per line
+              </p>
+            )}
+          </div>
+
+          {progress && (
+            <div className="progress-container">
+              <div className="progress-bar">
+                <div
+                  className={`progress-fill ${progress.stage === 'rate-limit' ? 'rate-limit' : ''}`}
+                  style={{ width: `${progress.progress}%` }}
+                ></div>
+              </div>
+              <p className={`progress-text ${progress.stage === 'rate-limit' ? 'rate-limit' : ''}`}>
+                {progress.stage === 'rate-limit' ? (
+                  <>{progress.message}</>
+                ) : (
+                  <><strong>{progress.stage}:</strong> {progress.message}</>
+                )}
+              </p>
+            </div>
+          )}
+
+          <div className="button-group" style={{ marginTop: '24px' }}>
+            <button
+              className="button"
+              onClick={handleSubmit}
+              disabled={submitting || needsConfig || !urls.trim()}
+            >
+              {submitting ? '⏳ Processing...' : '🚀 Submit URLs'}
+            </button>
+            <button
+              className="button button-secondary"
+              onClick={() => setUrls('')}
+              disabled={submitting}
+            >
+              Clear
+            </button>
+          </div>
+
+          {needsConfig && (
+            <div className="alert info" style={{ marginTop: '20px' }}>
+              ℹ️ Please configure your email and Supabase settings in the Configuration tab before submitting URLs.
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // Submissions Tab Component
+    function SubmissionsTab({ config }) {
+      const [submissions, setSubmissions] = useState([]);
+      const [stats, setStats] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [searchTerm, setSearchTerm] = useState('');
+      const [filterState, setFilterState] = useState('all');
+      const [sortBy, setSortBy] = useState('reported_at');
+      const [sortDir, setSortDir] = useState('desc');
+      const [checking, setChecking] = useState(false);
+
+      useEffect(() => {
+        loadData();
+        const interval = setInterval(loadData, 30000); // Refresh every 30 seconds
+        return () => clearInterval(interval);
+      }, []);
+
+      const loadData = async () => {
+        try {
+          const [submissionsRes, statsRes] = await Promise.all([
+            fetch('/api/submissions'),
+            fetch('/api/stats')
+          ]);
+
+          const submissionsData = await submissionsRes.json();
+          const statsData = await statsRes.json();
+
+          if (submissionsData.success) {
+            setSubmissions(submissionsData.submissions);
+          }
+
+          if (statsData.success) {
+            setStats(statsData.stats);
+          }
+        } catch (error) {
+          console.error('Error loading data:', error);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const handleCheckStatuses = async () => {
+        setChecking(true);
+        try {
+          const res = await fetch('/api/check-statuses', { method: 'POST' });
+          const data = await res.json();
+
+          if (data.success) {
+            alert(`✅ Updated ${data.updated} submissions`);
+            loadData();
+          }
+        } catch (error) {
+          alert('Error: ' + error.message);
+        } finally {
+          setChecking(false);
+        }
+      };
+
+      const filteredAndSorted = useMemo(() => {
+        let filtered = submissions;
+
+        // Filter by state
+        if (filterState !== 'all') {
+          filtered = filtered.filter(s => s.state === filterState);
+        }
+
+        // Filter by search
+        if (searchTerm) {
+          filtered = filtered.filter(s =>
+            s.url.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            (s.uuid && s.uuid.toLowerCase().includes(searchTerm.toLowerCase()))
+          );
+        }
+
+        // Sort
+        filtered.sort((a, b) => {
+          let aVal = a[sortBy];
+          let bVal = b[sortBy];
+
+          if (sortBy === 'reported_at') {
+            aVal = new Date(aVal);
+            bVal = new Date(bVal);
+          }
+
+          if (sortDir === 'asc') {
+            return aVal > bVal ? 1 : -1;
+          } else {
+            return aVal < bVal ? 1 : -1;
+          }
+        });
+
+        return filtered;
+      }, [submissions, searchTerm, filterState, sortBy, sortDir]);
+
+      const handleSort = (column) => {
+        if (sortBy === column) {
+          setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+        } else {
+          setSortBy(column);
+          setSortDir('desc');
+        }
+      };
+
+      if (loading) {
+        return (
+          <div className="loading">
+            <div className="spinner"></div>
+            <p>Loading submissions...</p>
+          </div>
+        );
+      }
+
+      return (
+        <div>
+          <h2>URL Submissions</h2>
+
+          {stats && (
+            <div className="stats-grid">
+              <div className="stat-card">
+                <h3>Total</h3>
+                <div className="value">{stats.total}</div>
+              </div>
+              <div className="stat-card">
+                <h3>Reported</h3>
+                <div className="value">{stats.reported}</div>
+              </div>
+              <div className="stat-card">
+                <h3>Completed</h3>
+                <div className="value">{stats.completed}</div>
+              </div>
+              <div className="stat-card">
+                <h3>Pending</h3>
+                <div className="value">{stats.pending + stats.processing}</div>
+              </div>
+              <div className="stat-card">
+                <h3>Failed</h3>
+                <div className="value">{stats.failed}</div>
+              </div>
+            </div>
+          )}
+
+          <div className="button-group" style={{ marginBottom: '24px' }}>
+            <button
+              className="button"
+              onClick={handleCheckStatuses}
+              disabled={checking}
+            >
+              {checking ? '⏳ Checking...' : '🔄 Check Status Updates'}
+            </button>
+            <button
+              className="button button-secondary"
+              onClick={loadData}
+            >
+              🔄 Refresh
+            </button>
+          </div>
+
+          <div className="search-box">
+            <input
+              type="text"
+              placeholder="🔍 Search by URL or UUID..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+
+          <div className="filter-buttons">
+            <button
+              className={`filter-btn ${filterState === 'all' ? 'active' : ''}`}
+              onClick={() => setFilterState('all')}
+            >
+              All
+            </button>
+            <button
+              className={`filter-btn ${filterState === 'pending' ? 'active' : ''}`}
+              onClick={() => setFilterState('pending')}
+            >
+              Pending
+            </button>
+            <button
+              className={`filter-btn ${filterState === 'processing' ? 'active' : ''}`}
+              onClick={() => setFilterState('processing')}
+            >
+              Processing
+            </button>
+            <button
+              className={`filter-btn ${filterState === 'no threats' ? 'active' : ''}`}
+              onClick={() => setFilterState('no threats')}
+            >
+              No Threats
+            </button>
+            <button
+              className={`filter-btn ${filterState === 'suspicious' ? 'active' : ''}`}
+              onClick={() => setFilterState('suspicious')}
+            >
+              Suspicious
+            </button>
+            <button
+              className={`filter-btn ${filterState === 'malicious' ? 'active' : ''}`}
+              onClick={() => setFilterState('malicious')}
+            >
+              Malicious
+            </button>
+            <button
+              className={`filter-btn ${filterState === 'failed' ? 'active' : ''}`}
+              onClick={() => setFilterState('failed')}
+            >
+              Failed
+            </button>
+          </div>
+
+          <div className="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th onClick={() => handleSort('url')}>
+                    URL {sortBy === 'url' && (sortDir === 'asc' ? '↑' : '↓')}
+                  </th>
+                  <th onClick={() => handleSort('uuid')}>
+                    UUID {sortBy === 'uuid' && (sortDir === 'asc' ? '↑' : '↓')}
+                  </th>
+                  <th onClick={() => handleSort('state')}>
+                    State {sortBy === 'state' && (sortDir === 'asc' ? '↑' : '↓')}
+                  </th>
+                  <th onClick={() => handleSort('reported_at')}>
+                    Reported {sortBy === 'reported_at' && (sortDir === 'asc' ? '↑' : '↓')}
+                  </th>
+                  <th>Tags</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredAndSorted.length === 0 ? (
+                  <tr>
+                    <td colSpan="5" style={{ textAlign: 'center', padding: '40px', color: '#718096' }}>
+                      No submissions found
+                    </td>
+                  </tr>
+                ) : (
+                  filteredAndSorted.map((sub, idx) => (
+                    <tr key={idx}>
+                      <td>
+                        <div className="url-preview" title={sub.url}>
+                          {sub.url}
+                        </div>
+                      </td>
+                      <td>
+                        <code style={{ fontSize: '12px', color: '#718096' }}>
+                          {sub.uuid ? sub.uuid.substring(0, 12) + '...' : 'N/A'}
+                        </code>
+                      </td>
+                      <td>
+                        <span className={`badge ${sub.state === 'failed' ? 'failed' :
+                          sub.state === 'pending' ? 'pending' :
+                          sub.state === 'processing' ? 'processing' : 'completed'}`}>
+                          {sub.state}
+                        </span>
+                      </td>
+                      <td>
+                        {new Date(sub.reported_at).toLocaleString()}
+                      </td>
+                      <td>
+                        {sub.tags && sub.tags.length > 0 ? sub.tags.join(', ') : '—'}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <p style={{ marginTop: '16px', color: '#718096', fontSize: '14px' }}>
+            Showing {filteredAndSorted.length} of {submissions.length} submissions
+          </p>
+        </div>
+      );
+    }
+
+    // Config Tab Component
+    function ConfigTab({ config, onUpdate }) {
+      const [email, setEmail] = useState(config?.email || '');
+      const [apiKey, setApiKey] = useState('');
+      const [supabaseUrl, setSupabaseUrl] = useState('');
+      const [supabaseKey, setSupabaseKey] = useState('');
+      const [tableName, setTableName] = useState(config?.tableName || 'netcraft_submissions');
+      const [saving, setSaving] = useState(false);
+      const [testing, setTesting] = useState(false);
+      const [message, setMessage] = useState(null);
+
+      const handleSave = async () => {
+        setSaving(true);
+        setMessage(null);
+
+        try {
+          const res = await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              email,
+              apiKey,
+              supabaseUrl,
+              supabaseKey,
+              tableName
+            })
+          });
+
+          const data = await res.json();
+
+          if (data.success) {
+            setMessage({ type: 'success', text: '✅ Configuration saved successfully!' });
+            onUpdate();
+          }
+        } catch (error) {
+          setMessage({ type: 'error', text: '❌ Error saving configuration: ' + error.message });
+        } finally {
+          setSaving(false);
+        }
+      };
+
+      const handleTestDb = async () => {
+        setTesting(true);
+        setMessage(null);
+
+        try {
+          const res = await fetch('/api/test-db', { method: 'POST' });
+          const data = await res.json();
+
+          if (data.success) {
+            setMessage({ type: 'success', text: '✅ Database connection successful!' });
+          } else {
+            setMessage({ type: 'error', text: '❌ Database test failed: ' + data.error });
+          }
+        } catch (error) {
+          setMessage({ type: 'error', text: '❌ Error testing database: ' + error.message });
+        } finally {
+          setTesting(false);
+        }
+      };
+
+      const sqlSetup = `CREATE TABLE netcraft_submissions (
+  id BIGSERIAL PRIMARY KEY,
+  url TEXT NOT NULL,
+  uuid TEXT,
+  reported_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  state TEXT NOT NULL DEFAULT 'pending',
+  tags TEXT[] DEFAULT '{}',
+  error TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Create indexes for faster queries
+CREATE INDEX idx_netcraft_url ON netcraft_submissions(url);
+CREATE INDEX idx_netcraft_uuid ON netcraft_submissions(uuid);
+CREATE INDEX idx_netcraft_state ON netcraft_submissions(state);
+CREATE INDEX idx_netcraft_reported_at ON netcraft_submissions(reported_at);`;
+
+      return (
+        <div>
+          <h2>Configuration</h2>
+
+          {message && (
+            <div className={`alert ${message.type}`}>
+              {message.text}
+            </div>
+          )}
+
+          <div className="form-group">
+            <label>Reporter Email Address *</label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="your-email@example.com"
+            />
+            <p style={{ fontSize: '13px', color: '#718096', marginTop: '4px' }}>
+              This email will be used to report URLs to Netcraft
+            </p>
+          </div>
+
+          <div className="form-group">
+            <label>Netcraft API Key (Optional)</label>
+            <input
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="Leave empty if you don't have an API key"
+            />
+          </div>
+
+          <hr style={{ margin: '32px 0', border: 'none', borderTop: '2px solid #e2e8f0' }} />
+
+          <h3 style={{ marginBottom: '16px' }}>Supabase Database Configuration</h3>
+
+          <div className="form-group">
+            <label>Supabase Project URL *</label>
+            <input
+              type="url"
+              value={supabaseUrl}
+              onChange={(e) => setSupabaseUrl(e.target.value)}
+              placeholder="https://your-project.supabase.co"
+            />
+          </div>
+
+          <div className="form-group">
+            <label>Supabase Anon Key *</label>
+            <input
+              type="password"
+              value={supabaseKey}
+              onChange={(e) => setSupabaseKey(e.target.value)}
+              placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+            />
+          </div>
+
+          <div className="form-group">
+            <label>Table Name</label>
+            <input
+              type="text"
+              value={tableName}
+              onChange={(e) => setTableName(e.target.value)}
+              placeholder="netcraft_submissions"
+            />
+          </div>
+
+          <div className="setup-instructions">
+            <h3>📋 Supabase Setup Instructions</h3>
+            <ol>
+              <li>Go to <a href="https://supabase.com" target="_blank" rel="noopener noreferrer">supabase.com</a> and create a new project</li>
+              <li>Go to the SQL Editor in your Supabase dashboard</li>
+              <li>Copy and run the SQL below to create the required table:</li>
+            </ol>
+            <div className="sql-box">{sqlSetup}</div>
+            <ol start="4">
+              <li>Go to Settings → API to find your Project URL and anon/public key</li>
+              <li>Paste those values in the form above</li>
+              <li>Click "Test Database Connection" to verify everything works</li>
+              <li>Click "Save Configuration"</li>
+            </ol>
+          </div>
+
+          <div className="button-group" style={{ marginTop: '24px' }}>
+            <button
+              className="button"
+              onClick={handleSave}
+              disabled={saving || !email || !supabaseUrl || !supabaseKey}
+            >
+              {saving ? '⏳ Saving...' : '💾 Save Configuration'}
+            </button>
+            <button
+              className="button button-secondary"
+              onClick={handleTestDb}
+              disabled={testing || !supabaseUrl || !supabaseKey}
+            >
+              {testing ? '⏳ Testing...' : '🧪 Test Database Connection'}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // Render App
+    ReactDOM.render(<App />, document.getElementById('root'));
+  </script>
+</body>
+</html>

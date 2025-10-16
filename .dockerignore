@@ -1,0 +1,39 @@
+# Node modules
+node_modules/
+npm-debug.log
+package-lock.json
+
+# Configuration (will be mounted as volume)
+config.json
+
+# Uploads directory (will be mounted as volume)
+uploads/
+
+# Git
+.git/
+.gitignore
+
+# Documentation (not needed in container)
+README.md
+QUICKSTART.md
+SYSTEM_DESIGN.md
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+*.log
+
+# Old data files
+submissions.json
+input.txt
+
+# Docker files
+Dockerfile
+docker-compose.yml
+.dockerignore
