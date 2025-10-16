@@ -549,59 +549,11 @@ async function processUrls(urls, jobId) {
 
       totalReported += insertedCount;
 
-      // Wait before fetching individual UUIDs
       io.to(socketRoom).emit('progress', {
-        stage: 'waiting',
-        message: `Waiting ${config.waitBeforeUuidFetch / 1000}s for Netcraft to process...`,
-        progress: 50
+        stage: 'storing',
+        message: `Stored ${insertedCount} URLs with batch UUID`,
+        progress: 70 + ((i / urlsToReport.length) * 20)
       });
-
-      await sleep(config.waitBeforeUuidFetch);
-
-      // Fetch individual UUIDs with retry
-      io.to(socketRoom).emit('progress', {
-        stage: 'fetching-uuids',
-        message: 'Fetching individual URL UUIDs...',
-        progress: 60
-      });
-
-      let uuidResult = null;
-      let retryCount = 0;
-
-      while (retryCount <= config.uuidFetchRetries) {
-        uuidResult = await api.getUrlUuids(submissionUuid, batch);
-        if (uuidResult.success) break;
-
-        retryCount++;
-        if (retryCount <= config.uuidFetchRetries) {
-          await sleep(config.uuidFetchRetryDelay);
-        }
-      }
-
-      if (uuidResult && uuidResult.success) {
-        const urlsData = uuidResult.data.urls || [];
-        let updatedCount = 0;
-
-        for (let idx = 0; idx < urlsData.length; idx++) {
-          const urlData = urlsData[idx];
-          if (!urlData) continue;
-
-          const returnedUrl = urlData.data?.url;
-          const found = urlData.found;
-          const individualUuid = urlData.uuid;
-
-          if (found && individualUuid && individualUuid !== submissionUuid && returnedUrl) {
-            await db.updateSubmissionByUrl(returnedUrl, { uuid: individualUuid });
-            updatedCount++;
-          }
-
-          io.to(socketRoom).emit('progress', {
-            stage: 'updating-uuids',
-            message: `Updated ${updatedCount}/${urlsData.length} individual UUIDs...`,
-            progress: 70 + ((idx / urlsData.length) * 20)
-          });
-        }
-      }
 
       if (i + BATCH_SIZE < urlsToReport.length) {
         await sleep(1000);
@@ -672,18 +624,45 @@ app.post('/api/check-statuses', async (req, res) => {
       return res.json({ success: true, message: 'No pending submissions', updated: 0 });
     }
 
+    // Group submissions by batch UUID
+    const batches = {};
+    submissions.forEach(submission => {
+      if (!batches[submission.uuid]) {
+        batches[submission.uuid] = [];
+      }
+      batches[submission.uuid].push(submission);
+    });
+
     let updated = 0;
-    for (const submission of submissions) {
-      const result = await api.getSubmissionStatus(submission.uuid);
 
-      if (result.success) {
-        const { state, tags } = result.data;
-        const tagNames = tags && Array.isArray(tags)
-          ? tags.map(tag => tag.name || tag).filter(name => name)
-          : [];
+    // Check each batch
+    for (const [batchUuid, batchSubmissions] of Object.entries(batches)) {
+      const result = await api.getSubmissionUrls(batchUuid);
 
-        await db.updateSubmission(submission.uuid, { state, tags: tagNames });
-        updated++;
+      if (result.success && result.data.urls) {
+        const apiUrls = result.data.urls;
+
+        // Update each URL in the batch
+        for (const apiUrl of apiUrls) {
+          // Find matching submission (handle trailing slash normalization)
+          const matchingSubmission = batchSubmissions.find(sub =>
+            sub.url === apiUrl.url ||
+            sub.url + '/' === apiUrl.url ||
+            sub.url === apiUrl.url.replace(/\/$/, '')
+          );
+
+          if (matchingSubmission) {
+            const tagNames = apiUrl.tags && Array.isArray(apiUrl.tags)
+              ? apiUrl.tags.map(tag => tag.name || tag).filter(name => name)
+              : [];
+
+            await db.updateSubmissionByUrl(matchingSubmission.url, {
+              state: apiUrl.url_state,
+              tags: tagNames
+            });
+            updated++;
+          }
+        }
       }
 
       await sleep(500);
