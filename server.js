@@ -235,6 +235,26 @@ class SupabaseDB {
     return data && data.length > 0 ? data[0] : null;
   }
 
+  async deleteSubmissions(urls) {
+    try {
+      const { data, error } = await this.supabase
+        .from(this.tableName)
+        .delete()
+        .in('url', urls)
+        .select();
+
+      if (error) {
+        console.error('Error deleting submissions:', error);
+        return { success: false, error: error.message };
+      }
+
+      return { success: true, deleted: data.length };
+    } catch (err) {
+      console.error('Exception in deleteSubmissions:', err);
+      return { success: false, error: err.message };
+    }
+  }
+
   async getAllSubmissions(filter = {}) {
     let query = this.supabase.from(this.tableName).select('*');
 
@@ -663,6 +683,32 @@ app.post('/api/check-statuses', async (req, res) => {
     }
 
     res.json({ success: true, updated, total: submissions.length });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete submissions
+app.post('/api/delete-submissions', async (req, res) => {
+  try {
+    if (!config.supabase.url || !config.supabase.key) {
+      return res.status(400).json({ error: 'Supabase not configured' });
+    }
+
+    const { urls } = req.body;
+
+    if (!urls || !Array.isArray(urls) || urls.length === 0) {
+      return res.status(400).json({ error: 'Invalid URLs array' });
+    }
+
+    const db = new SupabaseDB(config.supabase);
+    const result = await db.deleteSubmissions(urls);
+
+    if (result.success) {
+      res.json({ success: true, deleted: result.deleted });
+    } else {
+      res.status(500).json({ error: result.error });
+    }
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

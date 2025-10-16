@@ -27,6 +27,7 @@ Thumbs.db
 # Submissions data
 submissions.json
 
-# Extra technical contents
+# Unwanted contents
 PROJECT_STRUCTURE.md
 SYSTEM_DESIGN.md
+input.txt

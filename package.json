@@ -6,8 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
-    "cli": "node netcraft-cli.js",
-    "test-uuid": "node test-uuid.js"
+    "cli": "node netcraft-cli.js"
   },
   "keywords": [
     "netcraft",
@@ -16,7 +15,7 @@
     "url-reporter",
     "threat-intelligence"
   ],
-  "author": "",
+  "author": "CipherSage",
   "license": "MIT",
   "dependencies": {
     "@supabase/supabase-js": "^2.58.0",
