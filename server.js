@@ -440,6 +440,32 @@ app.post('/api/report', async (req, res) => {
   processUrls(urls, jobId);
 });
 
+// URL validation and normalization helper
+function normalizeAndValidateUrl(urlString) {
+  try {
+    // Trim whitespace
+    urlString = urlString.trim();
+
+    // If URL doesn't start with http:// or https://, add https://
+    if (!urlString.startsWith('http://') && !urlString.startsWith('https://')) {
+      urlString = 'https://' + urlString;
+    }
+
+    // Try to parse the URL
+    const url = new URL(urlString);
+
+    // Validate protocol
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return { valid: false, url: null };
+    }
+
+    // Return normalized URL
+    return { valid: true, url: url.href };
+  } catch (e) {
+    return { valid: false, url: null };
+  }
+}
+
 async function processUrls(urls, jobId) {
   const socketRoom = `job-${jobId}`;
 
@@ -448,31 +474,53 @@ async function processUrls(urls, jobId) {
     const api = new NetcraftAPI(config.email, config.apiKey);
 
     io.to(socketRoom).emit('progress', {
-      stage: 'filtering',
-      message: 'Checking for already reported URLs...',
+      stage: 'validating',
+      message: 'Validating URLs...',
       progress: 0
     });
 
-    // Filter out already reported URLs
-    const urlsToReport = [];
+    // Validate and filter URLs
+    const validUrls = [];
+    const invalidUrls = [];
     let skipped = 0;
 
     for (let i = 0; i < urls.length; i++) {
-      const url = urls[i];
-      const existing = await db.findByUrl(url);
+      const originalUrl = urls[i];
 
+      // Validate and normalize URL format
+      const { valid, url: normalizedUrl } = normalizeAndValidateUrl(originalUrl);
+
+      if (!valid) {
+        invalidUrls.push(originalUrl);
+        await db.addSubmission(originalUrl, null, 'failed', 'Invalid URL format');
+        continue;
+      }
+
+      // Check if already reported (use normalized URL)
+      const existing = await db.findByUrl(normalizedUrl);
       if (existing) {
         skipped++;
       } else {
-        urlsToReport.push(url);
+        validUrls.push(normalizedUrl);
       }
 
       io.to(socketRoom).emit('progress', {
-        stage: 'filtering',
-        message: `Checked ${i + 1}/${urls.length} URLs`,
-        progress: ((i + 1) / urls.length) * 20
+        stage: 'validating',
+        message: `Validated ${i + 1}/${urls.length} URLs`,
+        progress: ((i + 1) / urls.length) * 15
       });
     }
+
+    // Report invalid URLs to user
+    if (invalidUrls.length > 0) {
+      io.to(socketRoom).emit('invalid-urls', {
+        count: invalidUrls.length,
+        urls: invalidUrls.slice(0, 10), // Send first 10 as examples
+        message: `Found ${invalidUrls.length} invalid URL(s) - these have been marked as failed`
+      });
+    }
+
+    const urlsToReport = validUrls;
 
     if (urlsToReport.length === 0) {
       io.to(socketRoom).emit('complete', {
@@ -579,7 +627,8 @@ async function processUrls(urls, jobId) {
       total: urls.length,
       reported: totalReported,
       skipped: skipped,
-      failed: totalFailed
+      failed: totalFailed,
+      invalid: invalidUrls.length
     });
 
   } catch (error) {
