@@ -528,7 +528,8 @@ async function processUrls(urls, jobId) {
         total: urls.length,
         reported: 0,
         skipped: skipped,
-        failed: 0
+        failed: 0,
+        invalid: invalidUrls.length
       });
       return;
     }
@@ -581,6 +582,7 @@ async function processUrls(urls, jobId) {
           reported: totalReported,
           skipped: skipped,
           failed: totalFailed,
+          invalid: invalidUrls.length,
           message: `⚠️ Rate limit reached! Successfully reported ${totalReported} URLs. ${remainingUrls.length} URLs were not submitted.`
         });
         return;
@@ -774,7 +776,7 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
     const urls = content
       .split('\n')
       .map(line => line.trim())
-      .filter(line => line && (line.startsWith('http://') || line.startsWith('https://')));
+      .filter(line => line); // Accept all non-empty lines, validation happens in processUrls
 
     // Clean up uploaded file
     fs.unlinkSync(req.file.path);

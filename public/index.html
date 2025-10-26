@@ -176,10 +176,10 @@
       const handleSubmit = async () => {
         const urlList = urls.split('\n')
           .map(u => u.trim())
-          .filter(u => u && (u.startsWith('http://') || u.startsWith('https://')));
+          .filter(u => u); // Accept all non-empty lines, validation happens on server
 
         if (urlList.length === 0) {
-          alert('Please enter at least one valid URL');
+          alert('Please enter at least one URL');
           return;
         }
 
@@ -251,7 +251,9 @@
                   • Total URLs: {result.total}<br/>
                   • Successfully Reported: {result.reported}<br/>
                   • Skipped (already reported): {result.skipped}<br/>
-                  • Failed (rate limited): {result.failed}<br/><br/>
+                  • Failed (rate limited): {result.failed}<br/>
+                  {result.invalid > 0 && <span>• Invalid URLs: {result.invalid}<br/></span>}
+                  <br/>
                   <em>Please try again after some time to submit the remaining URLs.</em>
                 </>
               ) : (
@@ -259,7 +261,8 @@
                   ✅ Successfully processed {result.total} URLs<br/>
                   • Reported: {result.reported}<br/>
                   • Skipped: {result.skipped}<br/>
-                  • Failed: {result.failed}
+                  • Failed: {result.failed}<br/>
+                  {result.invalid > 0 && <span>• Invalid: {result.invalid}</span>}
                 </>
               )}
             </div>
