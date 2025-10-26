@@ -219,15 +219,6 @@
               });
             });
 
-            socket.on('invalid-urls', (invalidData) => {
-              // Show invalid URLs warning
-              setProgress({
-                stage: 'warning',
-                message: `⚠️ ${invalidData.message}`,
-                progress: 15
-              });
-            });
-
             socket.on('error', (errorData) => {
               alert('Error: ' + errorData.message);
               setSubmitting(false);
@@ -267,8 +258,7 @@
                 <>
                   ✅ Successfully processed {result.total} URLs<br/>
                   • Reported: {result.reported}<br/>
-                  • Skipped (already reported): {result.skipped}<br/>
-                  {result.invalid > 0 && <span>• Invalid URLs: {result.invalid}<br/></span>}
+                  • Skipped: {result.skipped}<br/>
                   • Failed: {result.failed}
                 </>
               )}
