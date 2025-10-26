@@ -20,7 +20,8 @@ const upload = multer({ dest: 'uploads/' });
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' })); // Increase JSON body size limit for large URL lists
+app.use(express.urlencoded({ limit: '50mb', extended: true })); // Increase URL-encoded body size limit
 app.use(express.static('public'));
 
 // In-memory configuration (in production, use a database)
@@ -76,7 +77,12 @@ class NetcraftAPI {
     }
 
     try {
-      const urlObjects = urls.map(url => ({ url }));
+      // Format URLs with required fields: country and reason
+      const urlObjects = urls.map(url => ({
+        url: url,
+        country: 'IN',  // India - adjust as needed
+        reason: 'phishing site'  // Required by Netcraft API
+      }));
 
       const response = await fetch(`${this.baseUrl}/report/urls`, {
         method: 'POST',
@@ -135,7 +141,7 @@ class NetcraftAPI {
     }
   }
 
-  async getSubmissionUrls(batchUuid) {
+  async getSubmissionUrls(batchUuid, count = 1000) {
     const headers = {};
 
     if (this.apiKey) {
@@ -143,7 +149,8 @@ class NetcraftAPI {
     }
 
     try {
-      const response = await fetch(`${this.baseUrl}/submission/${batchUuid}/urls`, {
+      // Add count parameter to fetch all URLs (default API limit is 25)
+      const response = await fetch(`${this.baseUrl}/submission/${batchUuid}/urls?count=${count}`, {
         method: 'GET',
         headers
       });
@@ -299,7 +306,7 @@ class SupabaseDB {
 
     if (error) {
       console.error('Error getting stats:', error);
-      return { total: 0, reported: 0, failed: 0, completed: 0, pending: 0, processing: 0 };
+      return { total: 0, reported: 0, failed: 0, completed: 0, pending: 0, processing: 0, credited: 0 };
     }
 
     const total = data.length;
@@ -308,17 +315,21 @@ class SupabaseDB {
     const completed = data.filter(s => ['no threats', 'suspicious', 'malicious'].includes(s.state)).length;
     const pending = data.filter(s => s.state === 'pending').length;
     const processing = data.filter(s => s.state === 'processing').length;
+    const credited = data.filter(s =>
+      s.tags && Array.isArray(s.tags) && s.tags.includes('credited')
+    ).length;
 
-    return { total, reported, failed, completed, pending, processing };
+    return { total, reported, failed, completed, pending, processing, credited };
   }
 
   async getPendingSubmissions() {
-    const { data, error } = await this.supabase
+    // Only fetch URLs that need status updates (exclude final states)
+    // Final states: failed, no threats, malicious, rejected
+    const { data, error} = await this.supabase
       .from(this.tableName)
       .select('*')
       .not('uuid', 'is', null)
-      .neq('state', 'failed')
-      .not('state', 'in', '("no threats","suspicious","malicious")');
+      .not('state', 'in', '("failed","no threats","malicious","rejected")');
 
     if (error) {
       console.error('Error getting pending submissions:', error);
@@ -332,6 +343,9 @@ class SupabaseDB {
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
+
+// Track active jobs for cancellation
+const activeJobs = new Map();
 
 // API Routes
 
@@ -469,9 +483,15 @@ function normalizeAndValidateUrl(urlString) {
 async function processUrls(urls, jobId) {
   const socketRoom = `job-${jobId}`;
 
+  // Register this job as active
+  activeJobs.set(jobId, { cancelled: false });
+
   try {
     const db = new SupabaseDB(config.supabase);
     const api = new NetcraftAPI(config.email, config.apiKey);
+
+    // Helper to check if job is cancelled
+    const isCancelled = () => activeJobs.get(jobId)?.cancelled === true;
 
     io.to(socketRoom).emit('progress', {
       stage: 'validating',
@@ -482,9 +502,18 @@ async function processUrls(urls, jobId) {
     // Validate and filter URLs
     const validUrls = [];
     const invalidUrls = [];
-    let skipped = 0;
+    const normalizedUrlsMap = new Map(); // Use Map to track original -> normalized mapping
+    let normalizedUrls = [];
 
+    // First pass: validate and normalize all URLs
     for (let i = 0; i < urls.length; i++) {
+      // Check if cancelled
+      if (isCancelled()) {
+        io.to(socketRoom).emit('stopped');
+        activeJobs.delete(jobId);
+        return;
+      }
+
       const originalUrl = urls[i];
 
       // Validate and normalize URL format
@@ -492,24 +521,87 @@ async function processUrls(urls, jobId) {
 
       if (!valid) {
         invalidUrls.push(originalUrl);
-        await db.addSubmission(originalUrl, null, 'failed', 'Invalid URL format');
         continue;
       }
 
-      // Check if already reported (use normalized URL)
-      const existing = await db.findByUrl(normalizedUrl);
-      if (existing) {
-        skipped++;
-      } else {
-        validUrls.push(normalizedUrl);
+      // Store mapping and deduplicate within the upload
+      if (!normalizedUrlsMap.has(normalizedUrl)) {
+        normalizedUrlsMap.set(normalizedUrl, originalUrl);
+        normalizedUrls.push(normalizedUrl);
       }
 
-      io.to(socketRoom).emit('progress', {
-        stage: 'validating',
-        message: `Validated ${i + 1}/${urls.length} URLs`,
-        progress: ((i + 1) / urls.length) * 15
-      });
+      if ((i + 1) % 100 === 0 || i === urls.length - 1) {
+        io.to(socketRoom).emit('progress', {
+          stage: 'validating',
+          message: `Validated ${i + 1}/${urls.length} URLs (${normalizedUrls.length} unique)`,
+          progress: ((i + 1) / urls.length) * 10
+        });
+      }
     }
+
+    // Check for existing URLs in batches for better performance
+    io.to(socketRoom).emit('progress', {
+      stage: 'validating',
+      message: 'Checking for duplicate URLs...',
+      progress: 12
+    });
+
+    const DEDUP_BATCH_SIZE = 500;
+    const existingUrlsSet = new Set();
+
+    for (let i = 0; i < normalizedUrls.length; i += DEDUP_BATCH_SIZE) {
+      if (isCancelled()) {
+        io.to(socketRoom).emit('stopped');
+        activeJobs.delete(jobId);
+        return;
+      }
+
+      const batch = normalizedUrls.slice(i, i + DEDUP_BATCH_SIZE);
+      const { data, error } = await db.supabase
+        .from(db.tableName)
+        .select('url')
+        .in('url', batch);
+
+      if (!error && data) {
+        data.forEach(row => existingUrlsSet.add(row.url));
+      }
+    }
+
+    let skipped = 0;
+    normalizedUrls.forEach(url => {
+      if (existingUrlsSet.has(url)) {
+        skipped++;
+      } else {
+        validUrls.push(url);
+      }
+    });
+
+    // Batch insert invalid URLs AFTER deduplication check
+    if (invalidUrls.length > 0) {
+      // Deduplicate invalid URLs too
+      const uniqueInvalidUrls = [...new Set(invalidUrls)];
+      const invalidSubmissions = uniqueInvalidUrls.map(url => ({
+        url,
+        uuid: null,
+        reported_at: new Date().toISOString(),
+        state: 'failed',
+        tags: [],
+        error: 'Invalid URL format'
+      }));
+
+      try {
+        await db.supabase.from(db.tableName).insert(invalidSubmissions);
+      } catch (err) {
+        console.error('Error batch inserting invalid URLs:', err);
+        // Ignore duplicate key errors - URL might already be in DB
+      }
+    }
+
+    io.to(socketRoom).emit('progress', {
+      stage: 'validating',
+      message: `Found ${validUrls.length} new URLs (${skipped} already reported)`,
+      progress: 15
+    });
 
     // Report invalid URLs to user
     if (invalidUrls.length > 0) {
@@ -546,6 +638,13 @@ async function processUrls(urls, jobId) {
     let totalFailed = 0;
 
     for (let i = 0; i < urlsToReport.length; i += BATCH_SIZE) {
+      // Check if cancelled
+      if (isCancelled()) {
+        io.to(socketRoom).emit('stopped');
+        activeJobs.delete(jobId);
+        return;
+      }
+
       const batch = urlsToReport.slice(i, i + BATCH_SIZE);
       const batchNum = Math.floor(i / BATCH_SIZE) + 1;
       const totalBatches = Math.ceil(urlsToReport.length / BATCH_SIZE);
@@ -557,6 +656,13 @@ async function processUrls(urls, jobId) {
       });
 
       const result = await api.reportUrls(batch);
+
+      // Check if cancelled after API call
+      if (isCancelled()) {
+        io.to(socketRoom).emit('stopped');
+        activeJobs.delete(jobId);
+        return;
+      }
 
       if (result.limitReached) {
         // Mark remaining URLs as failed with rate limit message
@@ -589,10 +695,36 @@ async function processUrls(urls, jobId) {
       }
 
       if (!result.success) {
-        for (const url of batch) {
-          await db.addSubmission(url, null, 'failed', result.error);
+        // Batch insert failed URLs for better performance
+        const failedSubmissions = batch.map(url => ({
+          url,
+          uuid: null,
+          reported_at: new Date().toISOString(),
+          state: 'failed',
+          tags: [],
+          error: result.error || 'Unknown error'
+        }));
+
+        try {
+          await db.supabase.from(db.tableName).insert(failedSubmissions);
+        } catch (err) {
+          console.error('Error inserting failed URLs:', err);
+          // Fallback to individual inserts
+          for (const url of batch) {
+            if (isCancelled()) break;  // Check cancellation
+            await db.addSubmission(url, null, 'failed', result.error);
+          }
         }
+
         totalFailed += batch.length;
+
+        // Check if cancelled after handling failures
+        if (isCancelled()) {
+          io.to(socketRoom).emit('stopped');
+          activeJobs.delete(jobId);
+          return;
+        }
+
         continue;
       }
 
@@ -605,17 +737,81 @@ async function processUrls(urls, jobId) {
         progress: 40 + ((i / urlsToReport.length) * 10)
       });
 
-      let insertedCount = 0;
-      for (const url of batch) {
-        const inserted = await db.addSubmission(url, submissionUuid);
-        if (inserted) insertedCount++;
+      // Double-check for duplicates right before inserting
+      // (in case another process inserted between our check and now)
+      const { data: recentCheck } = await db.supabase
+        .from(db.tableName)
+        .select('url')
+        .in('url', batch);
+
+      const recentlyAddedUrls = new Set(recentCheck?.map(r => r.url) || []);
+      const urlsToInsert = batch.filter(url => !recentlyAddedUrls.has(url));
+
+      if (urlsToInsert.length === 0) {
+        // All URLs were already inserted by another process - skip this batch
+        console.log(`Skipping batch ${batchNum}/${totalBatches} - all ${batch.length} URLs already exist`);
+        totalReported += batch.length; // Count them as "reported" since they already exist with UUID
+        continue;
       }
 
-      totalReported += insertedCount;
+      if (urlsToInsert.length < batch.length) {
+        // Some URLs already exist
+        const skippedInBatch = batch.length - urlsToInsert.length;
+        console.log(`Batch ${batchNum}: Inserting ${urlsToInsert.length}, skipping ${skippedInBatch} duplicates`);
+        totalReported += skippedInBatch; // Count skipped ones as already reported
+      }
+
+      // Batch insert to database for better performance
+      const submissions = urlsToInsert.map(url => ({
+        url,
+        uuid: submissionUuid,
+        reported_at: new Date().toISOString(),
+        state: 'pending',
+        tags: [],
+        error: null
+      }));
+
+      try {
+        const { data, error } = await db.supabase
+          .from(db.tableName)
+          .insert(submissions)
+          .select();
+
+        if (error) {
+          console.error('Batch insert error:', error);
+
+          // If it's a duplicate key error, skip those URLs (already reported)
+          if (error.code === '23505' || error.message?.includes('duplicate key')) {
+            console.log('Duplicate key error - URLs already exist, skipping...');
+            // Don't try to update - just skip since they're already in DB
+            // The Netcraft API already has these URLs submitted
+            totalReported += urlsToInsert.length;
+          } else {
+            // Fall back to individual inserts for other errors
+            let insertedCount = 0;
+            for (const url of urlsToInsert) {
+              const inserted = await db.addSubmission(url, submissionUuid);
+              if (inserted) insertedCount++;
+            }
+            totalReported += insertedCount;
+          }
+        } else {
+          totalReported += (data?.length || urlsToInsert.length);
+        }
+      } catch (err) {
+        console.error('Exception in batch insert:', err);
+        // Fall back to individual inserts
+        let insertedCount = 0;
+        for (const url of urlsToInsert) {
+          const inserted = await db.addSubmission(url, submissionUuid);
+          if (inserted) insertedCount++;
+        }
+        totalReported += insertedCount;
+      }
 
       io.to(socketRoom).emit('progress', {
         stage: 'storing',
-        message: `Stored ${insertedCount} URLs with batch UUID`,
+        message: `Stored ${batch.length} URLs with batch UUID`,
         progress: 70 + ((i / urlsToReport.length) * 20)
       });
 
@@ -637,6 +833,9 @@ async function processUrls(urls, jobId) {
     io.to(socketRoom).emit('error', {
       message: error.message
     });
+  } finally {
+    // Clean up job from active jobs
+    activeJobs.delete(jobId);
   }
 }
 
@@ -796,8 +995,19 @@ io.on('connection', (socket) => {
     console.log(`Client ${socket.id} joined job ${jobId}`);
   });
 
+  socket.on('stop-job', (jobId) => {
+    console.log(`Stop requested for job ${jobId} by ${socket.id}`);
+    const job = activeJobs.get(jobId);
+    if (job) {
+      job.cancelled = true;
+      io.to(`job-${jobId}`).emit('stopped');
+    }
+  });
+
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
+    // Note: We don't cancel jobs on disconnect to prevent orphan process issues
+    // Jobs will continue running even if client disconnects
   });
 });
 

@@ -17,11 +17,26 @@
   <script type="text/babel">
     const { useState, useEffect, useMemo } = React;
 
+    // Global state for processing job to persist across tabs
+    const globalProcessingState = {
+      jobId: null,
+      submitting: false,
+      progress: null,
+      result: null,
+      listeners: []
+    };
+
     // Main App Component
     function App() {
       const [activeTab, setActiveTab] = useState('submit');
       const [config, setConfig] = useState(null);
       const [loading, setLoading] = useState(true);
+      const [processingState, setProcessingState] = useState({
+        jobId: null,
+        submitting: false,
+        progress: null,
+        result: null
+      });
 
       useEffect(() => {
         loadConfig();
@@ -54,12 +69,27 @@
 
       const needsConfig = !config?.hasSupabaseConfig || !config?.email;
 
+      const updateProcessingState = (updates) => {
+        Object.assign(globalProcessingState, updates);
+        setProcessingState({ ...globalProcessingState });
+      };
+
       return (
         <div className="container">
           {needsConfig && (
             <div className="alert-banner">
               <span className="alert-icon">⚠️</span>
               <span>Configuration required! Please go to the <strong>Configuration</strong> tab to set up your email and Supabase database.</span>
+            </div>
+          )}
+
+          {processingState.submitting && processingState.progress && (
+            <div className="alert-banner" style={{ background: '#3182ce', color: 'white' }}>
+              <span className="alert-icon">⏳</span>
+              <span>
+                <strong>{processingState.progress.stage}:</strong> {processingState.progress.message}
+                {processingState.progress.progress > 0 && ` (${Math.round(processingState.progress.progress)}%)`}
+              </span>
             </div>
           )}
 
@@ -90,7 +120,7 @@
               </button>
             </div>
 
-            {activeTab === 'submit' && <SubmitTab config={config} needsConfig={needsConfig} />}
+            {activeTab === 'submit' && <SubmitTab config={config} needsConfig={needsConfig} processingState={processingState} updateProcessingState={updateProcessingState} />}
             {activeTab === 'submissions' && <SubmissionsTab config={config} />}
             {activeTab === 'config' && <ConfigTab config={config} onUpdate={loadConfig} />}
           </div>
@@ -99,20 +129,85 @@
     }
 
     // Submit Tab Component
-    function SubmitTab({ config }) {
+    function SubmitTab({ config, processingState, updateProcessingState }) {
       const [urls, setUrls] = useState('');
-      const [submitting, setSubmitting] = useState(false);
-      const [progress, setProgress] = useState(null);
-      const [result, setResult] = useState(null);
       const [socket, setSocket] = useState(null);
       const [dragOver, setDragOver] = useState(false);
+
+      // Use global processing state
+      const submitting = processingState.submitting;
+      const progress = processingState.progress;
+      const result = processingState.result;
+      const jobId = processingState.jobId;
 
       useEffect(() => {
         const newSocket = io();
         setSocket(newSocket);
 
+        // Resume listening to existing job if any
+        if (processingState.jobId) {
+          newSocket.emit('join-job', processingState.jobId);
+          setupSocketListeners(newSocket);
+        }
+
         return () => newSocket.close();
       }, []);
+
+      const setupSocketListeners = (socketInstance) => {
+        socketInstance.on('progress', (progressData) => {
+          updateProcessingState({ progress: progressData });
+        });
+
+        socketInstance.on('complete', (resultData) => {
+          updateProcessingState({
+            result: resultData,
+            submitting: false,
+            progress: null,
+            jobId: null
+          });
+        });
+
+        socketInstance.on('rate-limit', (rateLimitData) => {
+          updateProcessingState({
+            progress: {
+              stage: 'rate-limit',
+              message: `⚠️ ${rateLimitData.message}`,
+              progress: 100
+            }
+          });
+        });
+
+        socketInstance.on('error', (errorData) => {
+          alert('Error: ' + errorData.message);
+          updateProcessingState({
+            submitting: false,
+            progress: null,
+            jobId: null
+          });
+        });
+
+        socketInstance.on('stopped', () => {
+          updateProcessingState({
+            submitting: false,
+            progress: null,
+            result: { success: false, message: 'Processing stopped by user' },
+            jobId: null
+          });
+        });
+      };
+
+      const handleStop = () => {
+        if (!jobId) return;
+        if (!confirm('Are you sure you want to stop the current processing?')) return;
+
+        socket.emit('stop-job', jobId);
+        updateProcessingState({
+          submitting: false,
+          progress: null,
+          result: { success: false, message: 'Processing stopped by user' },
+          jobId: null
+        });
+      };
 
       const processFile = async (file) => {
         const formData = new FormData();
@@ -183,9 +278,12 @@
           return;
         }
 
-        setSubmitting(true);
-        setProgress({ stage: 'starting', message: 'Starting...', progress: 0 });
-        setResult(null);
+        updateProcessingState({
+          submitting: true,
+          progress: { stage: 'starting', message: 'Starting...', progress: 0 },
+          result: null,
+          jobId: null
+        });
 
         try {
           const res = await fetch('/api/report', {
@@ -197,41 +295,25 @@
           const data = await res.json();
 
           if (data.success) {
-            // Join socket room for progress updates
+            // Store job ID and join socket room
+            updateProcessingState({ jobId: data.jobId });
             socket.emit('join-job', data.jobId);
-
-            socket.on('progress', (progressData) => {
-              setProgress(progressData);
-            });
-
-            socket.on('complete', (resultData) => {
-              setResult(resultData);
-              setSubmitting(false);
-              setProgress(null);
-            });
-
-            socket.on('rate-limit', (rateLimitData) => {
-              // Show rate limit warning
-              setProgress({
-                stage: 'rate-limit',
-                message: `⚠️ ${rateLimitData.message}`,
-                progress: 100
-              });
-            });
-
-            socket.on('error', (errorData) => {
-              alert('Error: ' + errorData.message);
-              setSubmitting(false);
-              setProgress(null);
-            });
+            setupSocketListeners(socket);
           } else {
             alert('Error: ' + data.error);
-            setSubmitting(false);
+            updateProcessingState({
+              submitting: false,
+              progress: null,
+              jobId: null
+            });
           }
         } catch (error) {
           alert('Error: ' + error.message);
-          setSubmitting(false);
-          setProgress(null);
+          updateProcessingState({
+            submitting: false,
+            progress: null,
+            jobId: null
+          });
         }
       };
 
@@ -328,6 +410,15 @@
             >
               {submitting ? '⏳ Processing...' : '▶ Submit URLs'}
             </button>
+            {submitting && (
+              <button
+                className="button button-danger"
+                onClick={handleStop}
+                style={{ marginLeft: '8px' }}
+              >
+                ⏹ Stop
+              </button>
+            )}
             <button
               className="button button-secondary"
               onClick={() => setUrls('')}
@@ -498,6 +589,8 @@
       const [dateRange, setDateRange] = useState({ start: null, end: null });
       const [showCalendar, setShowCalendar] = useState(false);
       const [deleting, setDeleting] = useState(false);
+      const [currentPage, setCurrentPage] = useState(1);
+      const [itemsPerPage, setItemsPerPage] = useState(50);
 
       useEffect(() => {
         loadData();
@@ -549,9 +642,17 @@
       const filteredAndSorted = useMemo(() => {
         let filtered = submissions;
 
-        // Filter by state
+        // Filter by state or credited tag
         if (filterState !== 'all') {
-          filtered = filtered.filter(s => s.state === filterState);
+          if (filterState === 'credited') {
+            // Filter by credited tag
+            filtered = filtered.filter(s =>
+              s.tags && Array.isArray(s.tags) && s.tags.includes('credited')
+            );
+          } else {
+            // Filter by state
+            filtered = filtered.filter(s => s.state === filterState);
+          }
         }
 
         // Filter by search
@@ -593,6 +694,18 @@
         return filtered;
       }, [submissions, searchTerm, filterState, sortBy, sortDir, dateRange]);
 
+      // Pagination
+      const totalPages = Math.ceil(filteredAndSorted.length / itemsPerPage);
+      const paginatedData = useMemo(() => {
+        const startIndex = (currentPage - 1) * itemsPerPage;
+        return filteredAndSorted.slice(startIndex, startIndex + itemsPerPage);
+      }, [filteredAndSorted, currentPage, itemsPerPage]);
+
+      // Reset to page 1 when filters change
+      useEffect(() => {
+        setCurrentPage(1);
+      }, [searchTerm, filterState, dateRange]);
+
       const handleSort = (column) => {
         if (sortBy === column) {
           setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
@@ -604,11 +717,13 @@
 
       const handleSelectAll = (e) => {
         if (e.target.checked) {
-          // Select all FILTERED URLs only
-          const urls = filteredAndSorted.map(s => s.url);
-          setSelectedUrls(urls);
+          // Select all URLs on current page
+          const urls = paginatedData.map(s => s.url);
+          setSelectedUrls([...new Set([...selectedUrls, ...urls])]);
         } else {
-          setSelectedUrls([]);
+          // Deselect all URLs on current page
+          const pageUrls = paginatedData.map(s => s.url);
+          setSelectedUrls(selectedUrls.filter(url => !pageUrls.includes(url)));
         }
       };
 
@@ -689,6 +804,10 @@
                 <h3>Failed</h3>
                 <div className="value">{stats.failed}</div>
               </div>
+              <div className="stat-card">
+                <h3>Credited</h3>
+                <div className="value">{stats.credited || 0}</div>
+              </div>
             </div>
           )}
 
@@ -768,12 +887,6 @@
               No Threats
             </button>
             <button
-              className={`filter-btn ${filterState === 'suspicious' ? 'active' : ''}`}
-              onClick={() => setFilterState('suspicious')}
-            >
-              Suspicious
-            </button>
-            <button
               className={`filter-btn ${filterState === 'malicious' ? 'active' : ''}`}
               onClick={() => setFilterState('malicious')}
             >
@@ -785,6 +898,12 @@
             >
               Failed
             </button>
+            <button
+              className={`filter-btn ${filterState === 'credited' ? 'active' : ''}`}
+              onClick={() => setFilterState('credited')}
+            >
+              Credited
+            </button>
           </div>
 
           <div className="table-container">
@@ -794,7 +913,7 @@
                   <th className="checkbox-col">
                     <input
                       type="checkbox"
-                      checked={filteredAndSorted.length > 0 && selectedUrls.length === filteredAndSorted.length}
+                      checked={paginatedData.length > 0 && paginatedData.every(s => selectedUrls.includes(s.url))}
                       onChange={handleSelectAll}
                     />
                   </th>
@@ -814,14 +933,14 @@
                 </tr>
               </thead>
               <tbody>
-                {filteredAndSorted.length === 0 ? (
+                {paginatedData.length === 0 ? (
                   <tr>
                     <td colSpan="6" style={{ textAlign: 'center', padding: '40px', color: '#718096' }}>
                       No submissions found
                     </td>
                   </tr>
                 ) : (
-                  filteredAndSorted.map((sub, idx) => (
+                  paginatedData.map((sub, idx) => (
                     <tr key={idx}>
                       <td>
                         <input
@@ -860,9 +979,74 @@
             </table>
           </div>
 
-          <p style={{ marginTop: '16px', color: '#718096', fontSize: '14px' }}>
-            Showing {filteredAndSorted.length} of {submissions.length} submissions
-          </p>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px' }}>
+            <div>
+              <p style={{ color: '#718096', fontSize: '14px', margin: 0 }}>
+                Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, filteredAndSorted.length)} of {filteredAndSorted.length} filtered results ({submissions.length} total)
+              </p>
+            </div>
+
+            {totalPages > 1 && (
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <button
+                  className="button button-secondary"
+                  onClick={() => setCurrentPage(1)}
+                  disabled={currentPage === 1}
+                  style={{ padding: '6px 12px', fontSize: '14px' }}
+                >
+                  ««
+                </button>
+                <button
+                  className="button button-secondary"
+                  onClick={() => setCurrentPage(currentPage - 1)}
+                  disabled={currentPage === 1}
+                  style={{ padding: '6px 12px', fontSize: '14px' }}
+                >
+                  ‹
+                </button>
+                <span style={{ color: '#4a5568', fontSize: '14px', padding: '0 12px' }}>
+                  Page {currentPage} of {totalPages}
+                </span>
+                <button
+                  className="button button-secondary"
+                  onClick={() => setCurrentPage(currentPage + 1)}
+                  disabled={currentPage === totalPages}
+                  style={{ padding: '6px 12px', fontSize: '14px' }}
+                >
+                  ›
+                </button>
+                <button
+                  className="button button-secondary"
+                  onClick={() => setCurrentPage(totalPages)}
+                  disabled={currentPage === totalPages}
+                  style={{ padding: '6px 12px', fontSize: '14px' }}
+                >
+                  »»
+                </button>
+                <select
+                  value={itemsPerPage}
+                  onChange={(e) => {
+                    setItemsPerPage(Number(e.target.value));
+                    setCurrentPage(1);
+                  }}
+                  style={{
+                    marginLeft: '16px',
+                    padding: '6px 12px',
+                    fontSize: '14px',
+                    border: '1px solid #cbd5e0',
+                    borderRadius: '6px',
+                    background: 'white',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <option value="25">25 per page</option>
+                  <option value="50">50 per page</option>
+                  <option value="100">100 per page</option>
+                  <option value="200">200 per page</option>
+                </select>
+              </div>
+            )}
+          </div>
         </div>
       );
     }
