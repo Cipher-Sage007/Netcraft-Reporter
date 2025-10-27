@@ -178,11 +178,24 @@
         });
 
         socketInstance.on('error', (errorData) => {
+          console.error('Socket error:', errorData);
           alert('Error: ' + errorData.message);
           updateProcessingState({
             submitting: false,
             progress: null,
             jobId: null
+          });
+        });
+
+        socketInstance.on('batch-error', (batchErrorData) => {
+          console.warn('Batch error:', batchErrorData);
+          // Show error but don't stop processing - it will continue with next batch
+          updateProcessingState({
+            progress: {
+              stage: 'batch-error',
+              message: `⚠️ ${batchErrorData.message}`,
+              progress: null
+            }
           });
         });
 
@@ -639,6 +652,33 @@
         }
       };
 
+      const handleClearCache = async () => {
+        const confirmed = confirm(
+          '⚠️ This will permanently delete all URLs in the following states:\n\n' +
+          '• No Threats\n' +
+          '• Failed\n' +
+          '• Rejected\n' +
+          '• Unavailable\n\n' +
+          'Are you sure you want to continue?'
+        );
+
+        if (!confirmed) return;
+
+        try {
+          const res = await fetch('/api/clear-cache', { method: 'POST' });
+          const data = await res.json();
+
+          if (data.success) {
+            alert(`✅ ${data.message}`);
+            loadData();
+          } else {
+            alert(`❌ Error: ${data.error}`);
+          }
+        } catch (error) {
+          alert('Error: ' + error.message);
+        }
+      };
+
       const filteredAndSorted = useMemo(() => {
         let filtered = submissions;
 
@@ -650,7 +690,7 @@
               s.tags && Array.isArray(s.tags) && s.tags.includes('credited')
             );
           } else {
-            // Filter by state
+            // Filter by exact state
             filtered = filtered.filter(s => s.state === filterState);
           }
         }
@@ -797,8 +837,8 @@
                 <div className="value">{stats.completed}</div>
               </div>
               <div className="stat-card">
-                <h3>Pending</h3>
-                <div className="value">{stats.pending + stats.processing}</div>
+                <h3>Processing</h3>
+                <div className="value">{stats.processing}</div>
               </div>
               <div className="stat-card">
                 <h3>Failed</h3>
@@ -824,6 +864,13 @@
               onClick={loadData}
             >
               🔄 Refresh
+            </button>
+            <button
+              className="button button-danger"
+              onClick={handleClearCache}
+              style={{ marginLeft: '10px' }}
+            >
+              🗑️ Clear Cache
             </button>
           </div>
 
@@ -903,6 +950,18 @@
               onClick={() => setFilterState('credited')}
             >
               Credited
+            </button>
+            <button
+              className={`filter-btn ${filterState === 'rejected' ? 'active' : ''}`}
+              onClick={() => setFilterState('rejected')}
+            >
+              Rejected
+            </button>
+            <button
+              className={`filter-btn ${filterState === 'unavailable' ? 'active' : ''}`}
+              onClick={() => setFilterState('unavailable')}
+            >
+              Unavailable
             </button>
           </div>
 

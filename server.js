@@ -263,20 +263,42 @@ class SupabaseDB {
   }
 
   async getAllSubmissions(filter = {}) {
-    let query = this.supabase.from(this.tableName).select('*');
+    // Fetch all submissions with pagination to handle large datasets (70k+ URLs)
+    // Supabase has a default limit of 1000 rows
+    const pageSize = 1000;
+    let allData = [];
+    let page = 0;
+    let hasMore = true;
 
-    if (filter.state) {
-      query = query.eq('state', filter.state);
+    while (hasMore) {
+      let query = this.supabase
+        .from(this.tableName)
+        .select('*', { count: 'exact' })
+        .range(page * pageSize, (page + 1) * pageSize - 1)
+        .order('reported_at', { ascending: false });
+
+      if (filter.state) {
+        query = query.eq('state', filter.state);
+      }
+
+      const { data, error, count } = await query;
+
+      if (error) {
+        console.error('Error getting submissions:', error);
+        break;
+      }
+
+      if (data && data.length > 0) {
+        allData = allData.concat(data);
+        page++;
+        hasMore = data.length === pageSize;
+      } else {
+        hasMore = false;
+      }
     }
 
-    const { data, error } = await query.order('reported_at', { ascending: false });
-
-    if (error) {
-      console.error('Error getting submissions:', error);
-      return [];
-    }
-
-    return data || [];
+    console.log(`Fetched ${allData.length} total submissions from database`);
+    return allData;
   }
 
   async updateSubmission(uuid, updates) {
@@ -300,43 +322,83 @@ class SupabaseDB {
   }
 
   async getStats() {
-    const { data, error } = await this.supabase
-      .from(this.tableName)
-      .select('*');
+    // Fetch all submissions with pagination for accurate stats (70k+ URLs)
+    const pageSize = 1000;
+    let allData = [];
+    let page = 0;
+    let hasMore = true;
 
-    if (error) {
-      console.error('Error getting stats:', error);
+    while (hasMore) {
+      const { data, error } = await this.supabase
+        .from(this.tableName)
+        .select('*')
+        .range(page * pageSize, (page + 1) * pageSize - 1);
+
+      if (error) {
+        console.error('Error getting stats:', error);
+        break;
+      }
+
+      if (data && data.length > 0) {
+        allData = allData.concat(data);
+        page++;
+        hasMore = data.length === pageSize;
+      } else {
+        hasMore = false;
+      }
+    }
+
+    if (allData.length === 0) {
       return { total: 0, reported: 0, failed: 0, completed: 0, pending: 0, processing: 0, credited: 0 };
     }
 
-    const total = data.length;
-    const reported = data.filter(s => s.uuid && s.state !== 'failed').length;
-    const failed = data.filter(s => s.state === 'failed').length;
-    const completed = data.filter(s => ['no threats', 'suspicious', 'malicious'].includes(s.state)).length;
-    const pending = data.filter(s => s.state === 'pending').length;
-    const processing = data.filter(s => s.state === 'processing').length;
-    const credited = data.filter(s =>
+    const total = allData.length;
+    const reported = allData.filter(s => s.uuid && s.state !== 'failed').length;
+    const failed = allData.filter(s => s.state === 'failed').length;
+    const completed = allData.filter(s => ['no threats', 'suspicious', 'malicious'].includes(s.state)).length;
+    const pending = allData.filter(s => s.state === 'pending').length;
+    const processing = allData.filter(s => s.state === 'processing').length;
+    const credited = allData.filter(s =>
       s.tags && Array.isArray(s.tags) && s.tags.includes('credited')
     ).length;
 
+    console.log(`Stats calculated from ${allData.length} total submissions`);
     return { total, reported, failed, completed, pending, processing, credited };
   }
 
   async getPendingSubmissions() {
-    // Only fetch URLs that need status updates (exclude final states)
-    // Final states: failed, no threats, malicious, rejected
-    const { data, error} = await this.supabase
-      .from(this.tableName)
-      .select('*')
-      .not('uuid', 'is', null)
-      .not('state', 'in', '("failed","no threats","malicious","rejected")');
+    // Fetch ALL URLs that need status updates (exclude final states)
+    // Final states: failed, no threats, malicious, rejected, unavailable
+    // Use pagination to handle 50k+ URLs
+    const pageSize = 1000;
+    let allData = [];
+    let page = 0;
+    let hasMore = true;
 
-    if (error) {
-      console.error('Error getting pending submissions:', error);
-      return [];
+    while (hasMore) {
+      const { data, error} = await this.supabase
+        .from(this.tableName)
+        .select('*')
+        .not('uuid', 'is', null)
+        .not('state', 'in', '("failed","no threats","malicious","rejected","unavailable")')
+        .range(page * pageSize, (page + 1) * pageSize - 1);
+
+      if (error) {
+        console.error('Error getting pending submissions:', error);
+        break;
+      }
+
+      if (data && data.length > 0) {
+        allData = allData.concat(data);
+        page++;
+        hasMore = data.length === pageSize;
+      } else {
+        hasMore = false;
+      }
     }
 
-    return data || [];
+    console.log(`Found ${allData.length} pending/processing submissions to check`);
+    return allData;
   }
 }
 
@@ -655,7 +717,40 @@ async function processUrls(urls, jobId) {
         progress: 20 + ((i / urlsToReport.length) * 20)
       });
 
-      const result = await api.reportUrls(batch);
+      let result;
+      try {
+        result = await api.reportUrls(batch);
+      } catch (apiError) {
+        console.error(`Error submitting batch ${batchNum}:`, apiError);
+
+        // Mark batch as failed and continue with next batch
+        const failedSubmissions = batch.map(url => ({
+          url,
+          uuid: null,
+          reported_at: new Date().toISOString(),
+          state: 'failed',
+          tags: [],
+          error: `API Error: ${apiError.message || 'Network error'}`
+        }));
+
+        try {
+          await db.supabase.from(db.tableName).insert(failedSubmissions);
+        } catch (err) {
+          console.error('Error inserting failed batch:', err);
+        }
+
+        totalFailed += batch.length;
+
+        // Notify user of batch failure
+        io.to(socketRoom).emit('batch-error', {
+          batchNum,
+          totalBatches,
+          error: apiError.message || 'Network error',
+          message: `Batch ${batchNum}/${totalBatches} failed - continuing with next batch`
+        });
+
+        continue; // Continue with next batch instead of stopping
+      }
 
       // Check if cancelled after API call
       if (isCancelled()) {
@@ -897,16 +992,23 @@ app.post('/api/check-statuses', async (req, res) => {
       batches[submission.uuid].push(submission);
     });
 
+    const totalBatches = Object.keys(batches).length;
     let updated = 0;
+    let batchesProcessed = 0;
+
+    console.log(`Starting status check for ${submissions.length} URLs across ${totalBatches} batches`);
 
     // Check each batch
     for (const [batchUuid, batchSubmissions] of Object.entries(batches)) {
+      batchesProcessed++;
       const result = await api.getSubmissionUrls(batchUuid);
 
       if (result.success && result.data.urls) {
         const apiUrls = result.data.urls;
 
-        // Update each URL in the batch
+        // Collect all updates for this batch (don't update one-by-one!)
+        const updates = [];
+
         for (const apiUrl of apiUrls) {
           // Find matching submission (handle trailing slash normalization)
           const matchingSubmission = batchSubmissions.find(sub =>
@@ -920,19 +1022,68 @@ app.post('/api/check-statuses', async (req, res) => {
               ? apiUrl.tags.map(tag => tag.name || tag).filter(name => name)
               : [];
 
-            await db.updateSubmissionByUrl(matchingSubmission.url, {
+            updates.push({
+              url: matchingSubmission.url,
               state: apiUrl.url_state,
-              tags: tagNames
+              tags: tagNames,
+              reported_at: matchingSubmission.reported_at,
+              uuid: matchingSubmission.uuid,
+              error: matchingSubmission.error
             });
-            updated++;
           }
         }
+
+        // Update URLs in chunks to avoid overwhelming Supabase connections
+        if (updates.length > 0) {
+          try {
+            // Update in chunks of 50 at a time (prevents "fetch failed" errors)
+            const CHUNK_SIZE = 50;
+            let successCount = 0;
+
+            for (let i = 0; i < updates.length; i += CHUNK_SIZE) {
+              const chunk = updates.slice(i, i + CHUNK_SIZE);
+
+              const updatePromises = chunk.map(update =>
+                db.updateSubmissionByUrl(update.url, {
+                  state: update.state,
+                  tags: update.tags
+                })
+              );
+
+              await Promise.all(updatePromises);
+              successCount += chunk.length;
+            }
+
+            updated += successCount;
+            console.log(`[${batchesProcessed}/${totalBatches}] Batch ${batchUuid}: Updated ${successCount} URLs`);
+          } catch (err) {
+            console.error(`Exception in batch ${batchUuid} update:`, err);
+            // Fallback to sequential updates if parallel fails
+            let fallbackCount = 0;
+            for (const update of updates) {
+              try {
+                await db.updateSubmissionByUrl(update.url, {
+                  state: update.state,
+                  tags: update.tags
+                });
+                fallbackCount++;
+              } catch (updateErr) {
+                console.error(`Failed to update ${update.url}:`, updateErr.message);
+              }
+            }
+            updated += fallbackCount;
+            console.log(`[${batchesProcessed}/${totalBatches}] Batch ${batchUuid}: Updated ${fallbackCount} URLs (fallback)`);
+          }
+        }
+      } else {
+        console.log(`[${batchesProcessed}/${totalBatches}] Batch ${batchUuid}: API call failed or no data`);
       }
 
       await sleep(500);
     }
 
-    res.json({ success: true, updated, total: submissions.length });
+    console.log(`✅ Status check complete: Updated ${updated} URLs across ${totalBatches} batches`);
+    res.json({ success: true, updated, total: submissions.length, batches: totalBatches });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -960,6 +1111,41 @@ app.post('/api/delete-submissions', async (req, res) => {
       res.status(500).json({ error: result.error });
     }
   } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Clear cache - delete URLs in final states
+app.post('/api/clear-cache', async (req, res) => {
+  try {
+    if (!config.supabase.url || !config.supabase.key) {
+      return res.status(400).json({ error: 'Supabase not configured' });
+    }
+
+    const db = new SupabaseDB(config.supabase);
+
+    // Delete URLs in final states: no threats, failed, rejected, unavailable
+    const { data, error } = await db.supabase
+      .from(db.tableName)
+      .delete()
+      .in('state', ['no threats', 'failed', 'rejected', 'unavailable']);
+
+    if (error) {
+      console.error('Error clearing cache:', error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    // Count how many were deleted
+    const deletedCount = data?.length || 0;
+    console.log(`✅ Cache cleared: Deleted ${deletedCount} URLs in final states`);
+
+    res.json({
+      success: true,
+      deleted: deletedCount,
+      message: `Cleared ${deletedCount} URLs from cache (no threats, failed, rejected, unavailable)`
+    });
+  } catch (error) {
+    console.error('Exception clearing cache:', error);
     res.status(500).json({ error: error.message });
   }
 });
