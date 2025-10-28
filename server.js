@@ -157,12 +157,38 @@ class NetcraftAPI {
 
       if (!response.ok) {
         const errorText = await response.text();
+
+        // Check if response is HTML (error page from Cloudflare/CDN)
+        if (errorText.includes('<!DOCTYPE html>') || errorText.includes('<html')) {
+          // Rate limit or server error - return friendly error
+          if (response.status === 500) {
+            return { success: false, error: 'API server error (500)', rateLimited: true };
+          } else if (response.status === 503) {
+            return { success: false, error: 'API temporarily unavailable (503)', rateLimited: true };
+          } else if (response.status === 429) {
+            return { success: false, error: 'Rate limit exceeded (429)', rateLimited: true };
+          }
+          return { success: false, error: `API error (${response.status})`, rateLimited: true };
+        }
+
         return { success: false, error: `HTTP ${response.status}: ${errorText}` };
       }
 
-      const data = await response.json();
-      // Returns { urls: [{ url, url_state, tags, classification_log, uuid, ... }] }
-      return { success: true, data };
+      const contentType = response.headers.get('content-type');
+
+      // Check if response is JSON before parsing
+      if (contentType && contentType.includes('application/json')) {
+        const data = await response.json();
+        // Returns { urls: [{ url, url_state, tags, classification_log, uuid, ... }] }
+        return { success: true, data };
+      } else {
+        // Response is not JSON (likely HTML error page)
+        const text = await response.text();
+        if (text.includes('<!DOCTYPE html>') || text.includes('<html')) {
+          return { success: false, error: 'API returned HTML error page', rateLimited: true };
+        }
+        return { success: false, error: 'Invalid API response format' };
+      }
     } catch (error) {
       return { success: false, error: error.message };
     }
@@ -548,7 +574,7 @@ async function processUrls(urls, jobId) {
   // Register this job as active
   activeJobs.set(jobId, { cancelled: false });
 
-  try {
+  try{
     const db = new SupabaseDB(config.supabase);
     const api = new NetcraftAPI(config.email, config.apiKey);
 
@@ -892,15 +918,14 @@ async function processUrls(urls, jobId) {
           .select();
 
         if (error) {
-          console.error('Batch insert error:', error);
-
           // If it's a duplicate key error, skip those URLs (already reported)
           if (error.code === '23505' || error.message?.includes('duplicate key')) {
-            console.log('Duplicate key error - URLs already exist, skipping...');
+            console.log(`⏭️  Batch ${batchNum}/${totalBatches}: Skipped ${urlsToInsert.length} URLs (already in database)`);
             // Don't try to update - just skip since they're already in DB
             // The Netcraft API already has these URLs submitted
             totalReported += urlsToInsert.length;
           } else {
+            console.error('Batch insert error:', error);
             // Fall back to individual inserts for other errors
             let insertedCount = 0;
             for (const url of urlsToInsert) {
@@ -1099,7 +1124,12 @@ app.post('/api/check-statuses', async (req, res) => {
           }
         }
       } else {
-        console.log(`[${batchesProcessed}/${totalBatches}] Batch ${batchUuid}: API call failed or no data`);
+        // Handle rate-limited errors more gracefully
+        if (result.rateLimited) {
+          console.log(`⚠️  [${batchesProcessed}/${totalBatches}] Batch ${batchUuid}: ${result.error} - will retry later`);
+        } else {
+          console.log(`⚠️  [${batchesProcessed}/${totalBatches}] Batch ${batchUuid}: ${result.error || 'API call failed or no data'}`);
+        }
       }
 
       await sleep(500);
@@ -1219,6 +1249,7 @@ io.on('connection', (socket) => {
     // Jobs will continue running even if client disconnects
   });
 });
+
 
 // Start server
 const PORT = process.env.PORT || 3000;
