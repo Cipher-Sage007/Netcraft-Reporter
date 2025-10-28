@@ -187,6 +187,16 @@
           });
         });
 
+        socketInstance.on('url-limit-warning', (limitData) => {
+          console.warn('URL limit exceeded:', limitData);
+          alert(`⚠️ URL LIMIT EXCEEDED\n\n` +
+                `Submitted: ${limitData.total} URLs\n` +
+                `Processing: ${limitData.processing} URLs\n` +
+                `Remaining: ${limitData.remaining} URLs\n\n` +
+                `The system will process the first ${limitData.processing} URLs. ` +
+                `Please submit the remaining ${limitData.remaining} URLs in a separate submission.`);
+        });
+
         socketInstance.on('batch-error', (batchErrorData) => {
           console.warn('Batch error:', batchErrorData);
           // Show error but don't stop processing - it will continue with next batch

@@ -555,6 +555,23 @@ async function processUrls(urls, jobId) {
     // Helper to check if job is cancelled
     const isCancelled = () => activeJobs.get(jobId)?.cancelled === true;
 
+    // Enforce 50k URL limit per submission
+    const MAX_URLS = 50000;
+    let remainingUrls = 0;
+
+    if (urls.length > MAX_URLS) {
+      remainingUrls = urls.length - MAX_URLS;
+      console.log(`⚠️ URL limit exceeded: ${urls.length} URLs submitted, processing first ${MAX_URLS} URLs`);
+      urls = urls.slice(0, MAX_URLS);
+
+      io.to(socketRoom).emit('url-limit-warning', {
+        total: urls.length + remainingUrls,
+        processing: MAX_URLS,
+        remaining: remainingUrls,
+        message: `⚠️ Submitted ${urls.length + remainingUrls} URLs. Processing first ${MAX_URLS} URLs. Please submit the remaining ${remainingUrls} URLs separately.`
+      });
+    }
+
     io.to(socketRoom).emit('progress', {
       stage: 'validating',
       message: 'Validating URLs...',
@@ -825,6 +842,8 @@ async function processUrls(urls, jobId) {
 
       const submissionUuid = result.uuid;
 
+      console.log(`✅ Batch ${batchNum}/${totalBatches}: Netcraft API success - UUID: ${submissionUuid}`);
+
       // Store with batch UUID
       io.to(socketRoom).emit('progress', {
         stage: 'storing',
@@ -892,9 +911,10 @@ async function processUrls(urls, jobId) {
           }
         } else {
           totalReported += (data?.length || urlsToInsert.length);
+          console.log(`✅ Batch ${batchNum}/${totalBatches}: Stored ${data?.length || urlsToInsert.length} URLs in database`);
         }
       } catch (err) {
-        console.error('Exception in batch insert:', err);
+        console.error(`❌ Batch ${batchNum}/${totalBatches}: Exception in batch insert:`, err);
         // Fall back to individual inserts
         let insertedCount = 0;
         for (const url of urlsToInsert) {
@@ -902,6 +922,7 @@ async function processUrls(urls, jobId) {
           if (inserted) insertedCount++;
         }
         totalReported += insertedCount;
+        console.log(`✅ Batch ${batchNum}/${totalBatches}: Stored ${insertedCount} URLs via fallback`);
       }
 
       io.to(socketRoom).emit('progress', {
@@ -914,6 +935,8 @@ async function processUrls(urls, jobId) {
         await sleep(1000);
       }
     }
+
+    console.log(`✅ COMPLETE: Reported ${totalReported}, Skipped ${skipped}, Failed ${totalFailed}, Invalid ${invalidUrls.length}`);
 
     io.to(socketRoom).emit('complete', {
       success: true,
