@@ -999,12 +999,13 @@
                     Reported {sortBy === 'reported_at' && (sortDir === 'asc' ? '↑' : '↓')}
                   </th>
                   <th>Tags</th>
+                  <th>Report Page</th>
                 </tr>
               </thead>
               <tbody>
                 {paginatedData.length === 0 ? (
                   <tr>
-                    <td colSpan="6" style={{ textAlign: 'center', padding: '40px', color: '#718096' }}>
+                    <td colSpan="7" style={{ textAlign: 'center', padding: '40px', color: '#718096' }}>
                       No submissions found
                     </td>
                   </tr>
@@ -1040,6 +1041,22 @@
                       </td>
                       <td>
                         {sub.tags && sub.tags.length > 0 ? sub.tags.join(', ') : '—'}
+                      </td>
+                      <td style={{ textAlign: 'center', verticalAlign: 'middle' }}>
+                        {sub.uuid ? (
+                          <button
+                            className="button"
+                            onClick={() => window.open(`https://report.netcraft.com/submission/${sub.uuid}`, '_blank')}
+                            style={{ padding: '4px 8px', fontSize: '12px' }}
+                            title="View Report"
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                              <path d="M2 21L23 12L2 3V10L17 12L2 14V21Z" fill="currentColor"/>
+                            </svg>
+                          </button>
+                        ) : (
+                          '—'
+                        )}
                       </td>
                     </tr>
                   ))
