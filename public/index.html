@@ -605,6 +605,7 @@
       const [loading, setLoading] = useState(true);
       const [searchTerm, setSearchTerm] = useState('');
       const [filterState, setFilterState] = useState('all');
+      const [filterSource, setFilterSource] = useState('all');
       const [sortBy, setSortBy] = useState('reported_at');
       const [sortDir, setSortDir] = useState('desc');
       const [checking, setChecking] = useState(false);
@@ -705,6 +706,11 @@
           }
         }
 
+        // Filter by source
+        if (filterSource !== 'all') {
+          filtered = filtered.filter(s => (s.source || 'manual') === filterSource);
+        }
+
         // Filter by search
         if (searchTerm) {
           filtered = filtered.filter(s =>
@@ -742,7 +748,7 @@
         });
 
         return filtered;
-      }, [submissions, searchTerm, filterState, sortBy, sortDir, dateRange]);
+      }, [submissions, searchTerm, filterState, filterSource, sortBy, sortDir, dateRange]);
 
       // Pagination
       const totalPages = Math.ceil(filteredAndSorted.length / itemsPerPage);
@@ -754,7 +760,7 @@
       // Reset to page 1 when filters change
       useEffect(() => {
         setCurrentPage(1);
-      }, [searchTerm, filterState, dateRange]);
+      }, [searchTerm, filterState, filterSource, dateRange]);
 
       const handleSort = (column) => {
         if (sortBy === column) {
@@ -975,6 +981,35 @@
             </button>
           </div>
 
+          <div style={{ marginTop: '16px' }}>
+            <label style={{ fontSize: '14px', fontWeight: '600', color: '#2d3748', marginBottom: '8px', display: 'block' }}>
+              Filter by Source:
+            </label>
+            <div className="filter-buttons">
+              <button
+                className={`filter-btn ${filterSource === 'all' ? 'active' : ''}`}
+                onClick={() => setFilterSource('all')}
+              >
+                All Sources
+              </button>
+              <button
+                className={`filter-btn ${filterSource === 'manual' ? 'active' : ''}`}
+                onClick={() => setFilterSource('manual')}
+              >
+                Manual
+              </button>
+              {[...new Set(submissions.map(s => s.source || 'manual').filter(s => s !== 'manual'))].map(source => (
+                <button
+                  key={source}
+                  className={`filter-btn ${filterSource === source ? 'active' : ''}`}
+                  onClick={() => setFilterSource(source)}
+                >
+                  {source}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="table-container">
             <table>
               <thead>
@@ -995,6 +1030,9 @@
                   <th onClick={() => handleSort('state')}>
                     State {sortBy === 'state' && (sortDir === 'asc' ? '↑' : '↓')}
                   </th>
+                  <th onClick={() => handleSort('source')}>
+                    Source {sortBy === 'source' && (sortDir === 'asc' ? '↑' : '↓')}
+                  </th>
                   <th onClick={() => handleSort('reported_at')}>
                     Reported {sortBy === 'reported_at' && (sortDir === 'asc' ? '↑' : '↓')}
                   </th>
@@ -1005,7 +1043,7 @@
               <tbody>
                 {paginatedData.length === 0 ? (
                   <tr>
-                    <td colSpan="7" style={{ textAlign: 'center', padding: '40px', color: '#718096' }}>
+                    <td colSpan="8" style={{ textAlign: 'center', padding: '40px', color: '#718096' }}>
                       No submissions found
                     </td>
                   </tr>
@@ -1034,6 +1072,11 @@
                           sub.state === 'pending' ? 'pending' :
                           sub.state === 'processing' ? 'processing' : 'completed'}`}>
                           {sub.state}
+                        </span>
+                      </td>
+                      <td>
+                        <span style={{ fontSize: '13px', color: '#4a5568' }}>
+                          {sub.source || 'manual'}
                         </span>
                       </td>
                       <td>
@@ -1206,6 +1249,7 @@
   state TEXT NOT NULL DEFAULT 'pending',
   tags TEXT[] DEFAULT '{}',
   error TEXT,
+  source TEXT DEFAULT 'manual',
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -1214,7 +1258,8 @@
 CREATE INDEX idx_netcraft_url ON netcraft_submissions(url);
 CREATE INDEX idx_netcraft_uuid ON netcraft_submissions(uuid);
 CREATE INDEX idx_netcraft_state ON netcraft_submissions(state);
-CREATE INDEX idx_netcraft_reported_at ON netcraft_submissions(reported_at);`;
+CREATE INDEX idx_netcraft_reported_at ON netcraft_submissions(reported_at);
+CREATE INDEX idx_netcraft_source ON netcraft_submissions(source);`;
 
       return (
         <div>

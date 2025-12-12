@@ -205,14 +205,15 @@ class SupabaseDB {
     this.tableName = supabaseConfig.tableName;
   }
 
-  async addSubmission(url, uuid, state = 'pending', errorMsg = null) {
+  async addSubmission(url, uuid, state = 'pending', errorMsg = null, source = 'manual') {
     const submission = {
       url,
       uuid,
       reported_at: new Date().toISOString(),
       state,
       tags: [],
-      error: errorMsg
+      error: errorMsg,
+      source
     };
 
     try {
@@ -305,6 +306,10 @@ class SupabaseDB {
 
       if (filter.state) {
         query = query.eq('state', filter.state);
+      }
+
+      if (filter.source) {
+        query = query.eq('source', filter.source);
       }
 
       const { data, error, count } = await query;
@@ -519,7 +524,7 @@ app.post('/api/test-db', async (req, res) => {
 
 // Report URLs
 app.post('/api/report', async (req, res) => {
-  const { urls } = req.body;
+  const { urls, source = 'manual' } = req.body;
 
   if (!urls || !Array.isArray(urls) || urls.length === 0) {
     return res.status(400).json({ error: 'URLs array is required' });
@@ -539,7 +544,7 @@ app.post('/api/report', async (req, res) => {
   res.json({ success: true, jobId, message: 'Processing started' });
 
   // Process in background
-  processUrls(urls, jobId);
+  processUrls(urls, jobId, source);
 });
 
 // URL validation and normalization helper
@@ -568,7 +573,7 @@ function normalizeAndValidateUrl(urlString) {
   }
 }
 
-async function processUrls(urls, jobId) {
+async function processUrls(urls, jobId, source = 'manual') {
   const socketRoom = `job-${jobId}`;
 
   // Register this job as active
@@ -691,7 +696,8 @@ async function processUrls(urls, jobId) {
         reported_at: new Date().toISOString(),
         state: 'failed',
         tags: [],
-        error: 'Invalid URL format'
+        error: 'Invalid URL format',
+        source
       }));
 
       try {
@@ -773,7 +779,8 @@ async function processUrls(urls, jobId) {
           reported_at: new Date().toISOString(),
           state: 'failed',
           tags: [],
-          error: `API Error: ${apiError.message || 'Network error'}`
+          error: `API Error: ${apiError.message || 'Network error'}`,
+          source
         }));
 
         try {
@@ -806,7 +813,7 @@ async function processUrls(urls, jobId) {
         // Mark remaining URLs as failed with rate limit message
         const remainingUrls = urlsToReport.slice(i);
         for (const url of remainingUrls) {
-          await db.addSubmission(url, null, 'failed', 'Rate limit reached');
+          await db.addSubmission(url, null, 'failed', 'Rate limit reached', source);
         }
         totalFailed += remainingUrls.length;
 
@@ -840,7 +847,8 @@ async function processUrls(urls, jobId) {
           reported_at: new Date().toISOString(),
           state: 'failed',
           tags: [],
-          error: result.error || 'Unknown error'
+          error: result.error || 'Unknown error',
+          source
         }));
 
         try {
@@ -850,7 +858,7 @@ async function processUrls(urls, jobId) {
           // Fallback to individual inserts
           for (const url of batch) {
             if (isCancelled()) break;  // Check cancellation
-            await db.addSubmission(url, null, 'failed', result.error);
+            await db.addSubmission(url, null, 'failed', result.error, source);
           }
         }
 
@@ -908,7 +916,8 @@ async function processUrls(urls, jobId) {
         reported_at: new Date().toISOString(),
         state: 'pending',
         tags: [],
-        error: null
+        error: null,
+        source
       }));
 
       try {
@@ -929,7 +938,7 @@ async function processUrls(urls, jobId) {
             // Fall back to individual inserts for other errors
             let insertedCount = 0;
             for (const url of urlsToInsert) {
-              const inserted = await db.addSubmission(url, submissionUuid);
+              const inserted = await db.addSubmission(url, submissionUuid, 'pending', null, source);
               if (inserted) insertedCount++;
             }
             totalReported += insertedCount;
@@ -943,7 +952,7 @@ async function processUrls(urls, jobId) {
         // Fall back to individual inserts
         let insertedCount = 0;
         for (const url of urlsToInsert) {
-          const inserted = await db.addSubmission(url, submissionUuid);
+          const inserted = await db.addSubmission(url, submissionUuid, 'pending', null, source);
           if (inserted) insertedCount++;
         }
         totalReported += insertedCount;
@@ -990,7 +999,9 @@ app.get('/api/submissions', async (req, res) => {
     }
 
     const db = new SupabaseDB(config.supabase);
-    const filter = req.query.state ? { state: req.query.state } : {};
+    const filter = {};
+    if (req.query.state) filter.state = req.query.state;
+    if (req.query.source) filter.source = req.query.source;
     const submissions = await db.getAllSubmissions(filter);
 
     res.json({ success: true, submissions });
