@@ -13,6 +13,8 @@ uploads/
 # Environment variables
 .env
 .env.local
+scripts/
+urls.txt
 
 # OS files
 .DS_Store
