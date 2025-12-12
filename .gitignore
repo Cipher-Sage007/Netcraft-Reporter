@@ -14,8 +14,8 @@ uploads/
 .env
 .env.local
 scripts/
-urls.txt
 venv/
+urls.txt
 
 # OS files
 .DS_Store
